@@ -34,15 +34,15 @@ def evaluate_sample_many(
 
     # for loading segs to condition on:
     # setup for sampling
-    if config.model_type== "DDPM":
-        if config.segmentation_guided:
+    if config['model_type']== "DDPM":
+        if config['segmentation_guided']:
             pipeline = SegGuidedDDPMPipeline(
                 unet=model.module, scheduler=noise_scheduler, eval_dataloader=eval_dataloader, external_config=config
                 )
         else:
             pipeline = diffusers.DDPMPipeline(unet=model.module, scheduler=noise_scheduler)
-    elif config.model_type== "DDIM":
-        if config.segmentation_guided:
+    elif config['model_type']== "DDIM":
+        if config['segmentation_guided']:
             pipeline = SegGuidedDDIMPipeline(
                 unet=model.module, scheduler=noise_scheduler, eval_dataloader=eval_dataloader, external_config=config
                 )
@@ -50,7 +50,7 @@ def evaluate_sample_many(
             pipeline = diffusers.DDIMPipeline(unet=model.module, scheduler=noise_scheduler)
 
 
-    sample_dir = test_dir = os.path.join(config.output_dir, "samples_many_{}".format(sample_size))
+    sample_dir = test_dir = os.path.join(config['output_dir'], "samples_many_{}".format(sample_size))
     if not os.path.exists(sample_dir):
         os.makedirs(sample_dir)
 
@@ -58,12 +58,12 @@ def evaluate_sample_many(
     # keep sampling images until we have enough
     for bidx, seg_batch in tqdm(enumerate(eval_dataloader), total=len(eval_dataloader)):
         if num_sampled < sample_size:
-            if config.segmentation_guided:
+            if config['segmentation_guided']:
                 current_batch_size = [v for k, v in seg_batch.items() if k.startswith("seg_")][0].shape[0]
             else:
-                current_batch_size = config.eval_batch_size
+                current_batch_size = config['eval_batch_size']
 
-            if config.segmentation_guided:
+            if config['segmentation_guided']:
                 images = pipeline(
                     batch_size = current_batch_size,
                     seg_batch=seg_batch,
@@ -75,7 +75,7 @@ def evaluate_sample_many(
 
             # save each image in the list separately
             for i, img in enumerate(images):
-                if config.segmentation_guided:
+                if config['segmentation_guided']:
                     # name base on input mask fname
                     img_fname = "{}/condon_{}".format(sample_dir, seg_batch["image_filenames"][i])
                 else:
@@ -108,7 +108,7 @@ def evaluate_generation(
     # for loading segs to condition on:
     eval_dataloader = iter(eval_dataloader)
 
-    if config.segmentation_guided:
+    if config['segmentation_guided']:
         seg_batch = next(eval_dataloader)
         if eval_blank_mask:
             # use blank masks
@@ -118,15 +118,15 @@ def evaluate_generation(
 
     # setup for sampling
     # After each epoch you optionally sample some demo images with evaluate() and save the model
-    if config.model_type== "DDPM":
-        if config.segmentation_guided:
+    if config['model_type']== "DDPM":
+        if config['segmentation_guided']:
             pipeline = SegGuidedDDPMPipeline(
                 unet=model.module, scheduler=noise_scheduler, eval_dataloader=eval_dataloader, external_config=config
                 )
         else:
             pipeline = diffusers.DDPMPipeline(unet=model.module, scheduler=noise_scheduler)
-    elif config.model_type== "DDIM":
-        if config.segmentation_guided:
+    elif config['model_type']== "DDIM":
+        if config['segmentation_guided']:
             pipeline = SegGuidedDDIMPipeline(
                 unet=model.module, scheduler=noise_scheduler, eval_dataloader=eval_dataloader, external_config=config
                 )
@@ -134,15 +134,15 @@ def evaluate_generation(
             pipeline = diffusers.DDIMPipeline(unet=model.module, scheduler=noise_scheduler)
 
     # sample some images
-    if config.segmentation_guided:
+    if config['segmentation_guided']:
         evaluate(config, -1, pipeline, seg_batch, class_label_cfg, translate)
     else:
-        if config.class_conditional:
+        if config['class_conditional']:
             raise NotImplementedError("TODO: implement CFG and naive conditioning sampling for non-seg-guided pipelines, including for image translation")
         evaluate(config, -1, pipeline)
 
     # seg-guided specific visualizations
-    if config.segmentation_guided and eval_mask_removal:
+    if config['segmentation_guided'] and eval_mask_removal:
         plot_result_masks_multiclass = True
         if plot_result_masks_multiclass:
             pipeoutput_type = 'np'
@@ -151,7 +151,7 @@ def evaluate_generation(
 
         # visualize segmentation-guided sampling by seeing what happens 
         # when segs removed
-        num_viz = config.eval_batch_size
+        num_viz = config['eval_batch_size']
 
         # choose one seg to sample from; duplicate it
         eval_same_image = False
@@ -161,7 +161,7 @@ def evaluate_generation(
         result_masks = torch.Tensor()
         multiclass_masks = []
         result_imgs = []
-        multiclass_masks_shape = (config.eval_batch_size, 1, config.image_size, config.image_size)
+        multiclass_masks_shape = (config['eval_batch_size'], 1, config['img_size'], config['img_size'])
 
         # will plot segs + sampled images
         for seg_type in seg_batch.keys():
@@ -210,7 +210,7 @@ def evaluate_generation(
                     seg_batch_removed, config, device))
                 # add images conditioned on some segs but not all
                 removed_seg_imgs = pipeline(
-                    batch_size = config.eval_batch_size,
+                    batch_size = config['eval_batch_size'],
                     seg_batch=seg_batch_removed,
                     class_label_cfg=class_label_cfg,
                     translate=translate,
@@ -241,7 +241,7 @@ def evaluate_generation(
                                 seg_batch_removed, config, device))
                             # add images conditioned on some segs but not all
                             removed_seg_imgs = pipeline(
-                                batch_size = config.eval_batch_size,
+                                batch_size = config['eval_batch_size'],
                                 seg_batch=seg_batch_removed,
                                 class_label_cfg=class_label_cfg,
                                 translate=translate,
@@ -274,11 +274,11 @@ def evaluate_generation(
             )
 
             for i, img in enumerate(plot_imgs):
-                if config.data_set == 'breast_mri':
+                if config['data_set'] == 'breast_mri':
                     colors = ['black', 'white', 'red', 'blue']
-                elif config.data_set == 'ct_organ_large':
+                elif config['data_set'] == 'ct_organ_large':
                     colors = ['black', 'blue', 'green', 'red', 'yellow', 'magenta']
-                elif config.data_set == 'fastMRI_NYU':
+                elif config['data_set'] == 'fastMRI_NYU':
                     coloc = ['black', 'white']
                 else: 
                     raise ValueError('Unknown dataset')
@@ -290,7 +290,7 @@ def evaluate_generation(
                 axs[1,i].axis('off')
 
             plt.subplots_adjust(wspace=0, hspace=0)
-            plt.savefig('ablated_samples_{}.pdf'.format(config.data_set), bbox_inches='tight')
+            plt.savefig('ablated_samples_{}.pdf'.format(config['data_set']), bbox_inches='tight')
             plt.show()
 
         else:
@@ -300,7 +300,7 @@ def evaluate_generation(
             image_grid = make_grid(result_imgs, rows=rows, cols=cols)
 
             # Save the images
-            test_dir = os.path.join(config.output_dir, "samples")
+            test_dir = os.path.join(config['output_dir'], "samples")
             os.makedirs(test_dir, exist_ok=True)
             image_grid.save(f"{test_dir}/mask_removal_imgs.png")
 
@@ -316,7 +316,7 @@ def convert_segbatch_to_multiclass(shape, segmentations_batch, config, device):
             seg = seg.to(device, dtype=torch.float32)
             segs[segs == 0] = seg[segs == 0]
 
-    if config.use_ablated_segmentations:
+    if config['use_ablated_segmentations']:
         # randomly remove class labels from segs with some probability
         segs = ablate_masks(segs, config)
 
@@ -331,7 +331,7 @@ def ablate_masks(segs, config, method="equal_weighted"):
         # which is by default if the mask file was saved as {0, 1, 2 ,...} and then normalized by default to [0, 1] by transforms.ToTensor()
         # num_segmentation_classes
         """
-        class_removals = (torch.rand(config.num_segmentation_classes - 1) < 0.5).int().bool().tolist()
+        class_removals = (torch.rand(config['num_segmentation_classes'] - 1) < 0.5).int().bool().tolist()
         for class_idx, remove_class in enumerate(class_removals):
             if remove_class:
                 segs[(255 * segs).int() == class_idx + 1] = 0
@@ -353,13 +353,13 @@ def add_segmentations_to_noise(noisy_images, segmentations_batch, config, device
     concat segmentations to noisy image
     """
 
-    if config.segmentation_channel_mode == "single":
+    if config['segmentation_channel_mode'] == "single":
         multiclass_masks_shape = (noisy_images.shape[0], 1, noisy_images.shape[2], noisy_images.shape[3])
         segs = convert_segbatch_to_multiclass(multiclass_masks_shape, segmentations_batch, config, device) 
         # concat segs to noise
         noisy_images = torch.cat((noisy_images, segs), dim=1)
         
-    elif config.segmentation_channel_mode == "multi":
+    elif config['segmentation_channel_mode'] == "multi":
         raise NotImplementedError
 
     return noisy_images
@@ -372,16 +372,16 @@ def evaluate(config, epoch, pipeline, seg_batch=None, class_label_cfg=None, tran
     # possibly mask guided and/or class conditioned.
     # The default pipeline output type is `List[PIL.Image]`     # modified on Dec 12 to be `List[np.ndarray]`
 
-    if config.segmentation_guided:
+    if config['segmentation_guided']:
         images = pipeline(
-            batch_size = config.eval_batch_size,
+            batch_size = config['eval_batch_size'],
             seg_batch=seg_batch,
             class_label_cfg=class_label_cfg,
             translate=translate
         ).images
     else:
         images = pipeline(
-            batch_size = config.eval_batch_size,
+            batch_size = config['eval_batch_size'],
             # TODO: implement CFG and naive conditioning sampling for non-seg-guided pipelines (also needed for translation)
         ).images
 
@@ -392,7 +392,7 @@ def evaluate(config, epoch, pipeline, seg_batch=None, class_label_cfg=None, tran
     # image_grid = make_grid(images, rows=rows, cols=cols)
 
     # Save the images
-    test_dir = os.path.join(config.output_dir, "samples")
+    test_dir = os.path.join(config['output_dir'], "samples")
     os.makedirs(test_dir, exist_ok=True)
 
     epoch_test_dir = os.path.join(test_dir, f"{epoch:04d}")
@@ -402,7 +402,7 @@ def evaluate(config, epoch, pipeline, seg_batch=None, class_label_cfg=None, tran
 
     # save segmentations we conditioned the samples on segm
     # currently not support no segm guided
-    if config.segmentation_guided:
+    if config['segmentation_guided']:
 
         print("eval line403 seg_batch keys", seg_batch.keys())
         print("eval line404 seg_batch patient_ids", seg_batch['patient_id'])
@@ -516,9 +516,9 @@ class SegGuidedDDPMPipeline(DiffusionPipeline):
                 returned where the first element is a list with the generated images
         """
         # Sample gaussian noise to begin loop
-        if self.external_config.segmentation_channel_mode == "single":
+        if self.external_config['segmentation_channel_mode'] == "single":
             img_channel_ct = self.unet.config.in_channels - 1
-        elif self.external_config.segmentation_channel_mode == "multi":
+        elif self.external_config['segmentation_channel_mode'] == "multi":
             img_channel_ct = self.unet.config.in_channels - len([k for k in seg_batch.keys() if k.startswith("seg_")])
 
         if isinstance(self.unet.config.sample_size, int):
@@ -529,9 +529,9 @@ class SegGuidedDDPMPipeline(DiffusionPipeline):
                 self.unet.config.sample_size,
             )
         else:
-            if self.external_config.segmentation_channel_mode == "single":
+            if self.external_config['segmentation_channel_mode'] == "single":
                 image_shape = (batch_size, self.unet.config.in_channels - 1, *self.unet.config.sample_size)
-            elif self.external_config.segmentation_channel_mode == "multi":
+            elif self.external_config['segmentation_channel_mode'] == "multi":
                 image_shape = (batch_size, self.unet.config.in_channels - len([k for k in seg_batch.keys() if k.startswith("seg_")]), *self.unet.config.sample_size)
             
 
@@ -546,7 +546,7 @@ class SegGuidedDDPMPipeline(DiffusionPipeline):
                 image = randn_tensor(image_shape, generator=generator, device=self.device)
         else:
             # image translation sampling; start from source domain images, add noise up to certain step, then being there for denoising
-            trans_start_t = int(self.external_config.trans_noise_level * self.scheduler.config.num_train_timesteps)
+            trans_start_t = int(self.external_config['trans_noise_level'] * self.scheduler.config.num_train_timesteps)
 
             trans_start_images = seg_batch["images"]
 
@@ -573,14 +573,14 @@ class SegGuidedDDPMPipeline(DiffusionPipeline):
             # first, concat segmentations to noise
             image = add_segmentations_to_noise(image, seg_batch, self.external_config, self.device)
 
-            if self.external_config.class_conditional:
+            if self.external_config['class_conditional']:
                 if class_label_cfg is not None:
                     class_labels = torch.full([image.size(0)], class_label_cfg).long().to(self.device)
                     model_output_cond = self.unet(image, t, class_labels=class_labels).sample
-                    if self.external_config.use_cfg_for_eval_conditioning:
+                    if self.external_config['use_cfg_for_eval_conditioning']:
                         # use classifier-free guidance for sampling from the given class
 
-                        if self.external_config.cfg_maskguidance_condmodel_only:
+                        if self.external_config['cfg_maskguidance_condmodel_only']:
                             image_emptymask = torch.cat((image[:, :img_channel_ct, :, :], torch.zeros_like(image[:, img_channel_ct:, :, :])), dim=1)
                             model_output_uncond = self.unet(image_emptymask, t, 
                                     class_labels=torch.zeros_like(class_labels).long()).sample
@@ -589,14 +589,14 @@ class SegGuidedDDPMPipeline(DiffusionPipeline):
                                     class_labels=torch.zeros_like(class_labels).long()).sample
 
                         # use cfg equation
-                        model_output = (1. + self.external_config.cfg_weight) * model_output_cond - self.external_config.cfg_weight * model_output_uncond
+                        model_output = (1. + self.external_config['cfg_weight']) * model_output_cond - self.external_config['cfg_weight'] * model_output_uncond
                     else:
                         # just use normal conditioning
                         model_output = model_output_cond
                
                 else:
                     # or, just use basic network conditioning to sample from both classes
-                    if self.external_config.class_conditional:
+                    if self.external_config['class_conditional']:
                         # if training conditionally, evaluate source domain samples
                         class_labels = torch.ones(image.size(0)).long().to(self.device)
                         model_output = self.unet(image, t, class_labels=class_labels).sample
@@ -612,7 +612,7 @@ class SegGuidedDDPMPipeline(DiffusionPipeline):
 
         # if training conditionally, also evaluate for target domain images
         # if not using chosen class for CFG
-        if self.external_config.class_conditional and class_label_cfg is None:
+        if self.external_config['class_conditional'] and class_label_cfg is None:
             image_target_domain = randn_tensor(image_shape, generator=generator, device=self._execution_device, dtype=self.unet.dtype)
 
             # set step values
@@ -624,7 +624,7 @@ class SegGuidedDDPMPipeline(DiffusionPipeline):
                 # no masks in target domain so just use blank masks
                 image_target_domain = torch.cat((image_target_domain, torch.zeros_like(image_target_domain)), dim=1)
 
-                if self.external_config.class_conditional:
+                if self.external_config['class_conditional']:
                     # if training conditionally, also evaluate unconditional model and target domain (no masks)
                     class_labels = torch.cat([torch.full([image_target_domain.size(0) // 2], 2), torch.zeros(image_target_domain.size(0)) // 2]).long().to(self.device)
                     model_output = self.unet(image_target_domain, t, class_labels=class_labels).sample
@@ -746,20 +746,20 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
         """
 
         # Sample gaussian noise to begin loop
-        if self.external_config.segmentation_channel_mode == "single":
+        if self.external_config['segmentation_channel_mode'] == "single":
             img_channel_ct = self.unet.config.in_channels - 1
-        elif self.external_config.segmentation_channel_mode == "multi":
+        elif self.external_config['segmentation_channel_mode'] == "multi":
             img_channel_ct = self.unet.config.in_channels - len([k for k in seg_batch.keys() if k.startswith("seg_")])
 
         if isinstance(self.unet.config.sample_size, int):
-            if self.external_config.segmentation_channel_mode == "single":
+            if self.external_config['segmentation_channel_mode'] == "single":
                 image_shape = (
                     batch_size,
                     self.unet.config.in_channels - 1,
                     self.unet.config.sample_size,
                     self.unet.config.sample_size,
                 )
-            elif self.external_config.segmentation_channel_mode == "multi":
+            elif self.external_config['segmentation_channel_mode'] == "multi":
                 image_shape = (
                     batch_size,
                     self.unet.config.in_channels - len([k for k in seg_batch.keys() if k.startswith("seg_")]),
@@ -767,9 +767,9 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
                     self.unet.config.sample_size,
                 )
         else:
-            if self.external_config.segmentation_channel_mode == "single":
+            if self.external_config['segmentation_channel_mode'] == "single":
                 image_shape = (batch_size, self.unet.config.in_channels - 1, *self.unet.config.sample_size)
-            elif self.external_config.segmentation_channel_mode == "multi":
+            elif self.external_config['segmentation_channel_mode'] == "multi":
                 image_shape = (batch_size, self.unet.config.in_channels - len([k for k in seg_batch.keys() if k.startswith("seg_")]), *self.unet.config.sample_size)
             
         if isinstance(generator, list) and len(generator) != batch_size:
@@ -784,7 +784,7 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
             image = randn_tensor(image_shape, generator=generator, device=self._execution_device, dtype=self.unet.dtype)
         else:
             # image translation sampling; start from source domain images, add noise up to certain step, then being there for denoising
-            trans_start_t = int(self.external_config.trans_noise_level * self.scheduler.config.num_train_timesteps)
+            trans_start_t = int(self.external_config['trans_noise_level'] * self.scheduler.config.num_train_timesteps)
 
             trans_start_images = seg_batch["images"].to(self._execution_device)
 
@@ -811,13 +811,13 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
             # first, concat segmentations to noise
             image = add_segmentations_to_noise(image, seg_batch, self.external_config, self.device)
 
-            if self.external_config.class_conditional:
+            if self.external_config['class_conditional']:
                 if class_label_cfg is not None:
                     class_labels = torch.full([image.size(0)], class_label_cfg).long().to(self.device)
                     model_output_cond = self.unet(image, t, class_labels=class_labels).sample
-                    if self.external_config.use_cfg_for_eval_conditioning:
+                    if self.external_config['use_cfg_for_eval_conditioning']:
                         # use classifier-free guidance for sampling from the given class
-                        if self.external_config.cfg_maskguidance_condmodel_only:
+                        if self.external_config['cfg_maskguidance_condmodel_only']:
                             image_emptymask = torch.cat((image[:, :img_channel_ct, :, :], torch.zeros_like(image[:, img_channel_ct:, :, :])), dim=1)
                             model_output_uncond = self.unet(image_emptymask, t, 
                                     class_labels=torch.zeros_like(class_labels).long()).sample
@@ -826,13 +826,13 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
                                     class_labels=torch.zeros_like(class_labels).long()).sample
 
                         # use cfg equation
-                        model_output = (1. + self.external_config.cfg_weight) * model_output_cond - self.external_config.cfg_weight * model_output_uncond
+                        model_output = (1. + self.external_config['cfg_weight']) * model_output_cond - self.external_config['cfg_weight'] * model_output_uncond
                     else:
                         model_output = model_output_cond
                
                 else:
                     # or, just use basic network conditioning to sample from both classes
-                    if self.external_config.class_conditional:
+                    if self.external_config['class_conditional']:
                         # if training conditionally, evaluate source domain samples
                         class_labels = torch.ones(image.size(0)).long().to(self.device)
                         model_output = self.unet(image, t, class_labels=class_labels).sample
@@ -851,7 +851,7 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
 
         # if training conditionally, also evaluate for target domain images
         # if not using chosen class for CFG
-        if self.external_config.class_conditional and class_label_cfg is None:
+        if self.external_config['class_conditional'] and class_label_cfg is None:
             image_target_domain = randn_tensor(image_shape, generator=generator, device=self._execution_device, dtype=self.unet.dtype)
 
             # set step values
@@ -863,7 +863,7 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
                 # no masks in target domain so just use blank masks
                 image_target_domain = torch.cat((image_target_domain, torch.zeros_like(image_target_domain)), dim=1)
 
-                if self.external_config.class_conditional:
+                if self.external_config['class_conditional']:
                     # if training conditionally, also evaluate unconditional model and target domain (no masks)
                     class_labels = torch.cat([torch.full([image_target_domain.size(0) // 2], 2), torch.zeros(image_target_domain.size(0) // 2)]).long().to(self.device)
                     model_output = self.unet(image_target_domain, t, class_labels=class_labels).sample

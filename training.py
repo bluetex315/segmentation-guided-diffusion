@@ -74,17 +74,17 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval
     global_step = 0
 
     # logging
-    run_name = '{}-{}-{}'.format(config.model_type.lower(), config.dataset, config.image_size)
-    if config.segmentation_guided:
+    run_name = '{}-{}-{}'.format(config['model_type'].lower(), config['dataset'], config['img_size'])
+    if config['segmentation_guided']:
         run_name += "-segguided"
     writer = SummaryWriter(comment=run_name)
 
     # Now you train the model
     start_epoch = 0
-    if config.resume_epoch is not None:
-        start_epoch = config.resume_epoch
+    if config['resume_epoch'] is not None:
+        start_epoch = config['resume_epoch']
 
-    for epoch in range(start_epoch, config.num_epochs):
+    for epoch in range(start_epoch, config['num_epochs']):
         progress_bar = tqdm(total=len(train_dataloader))
         progress_bar.set_description(f"Epoch {epoch}")
 
@@ -99,21 +99,21 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval
             bs = clean_images.shape[0]
 
             # Sample a random timestep for each image
-            timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bs,), device=clean_images.device).long()
+            timesteps = torch.randint(0, noise_scheduler.config['num_train_timesteps'], (bs,), device=clean_images.device).long()
 
             # Add noise to the clean images according to the noise magnitude at each timestep
             # (this is the forward diffusion process)
             noisy_images = noise_scheduler.add_noise(clean_images, noise, timesteps)
 
-            if config.segmentation_guided:
+            if config['segmentation_guided']:
                 noisy_images = add_segmentations_to_noise(noisy_images, batch, config, device)
 
             # Predict the noise residual
-            if config.class_conditional:
+            if config['class_conditional']:
                 class_labels = torch.ones(noisy_images.size(0)).long().to(device)
                 # classifier-free guidance
                 a = np.random.uniform()
-                if a <= config.cfg_p_uncond:
+                if a <= config['cfg_p_uncond']:
                     class_labels = torch.zeros_like(class_labels).long()
                 noise_pred = model(noisy_images, timesteps, class_labels=class_labels, return_dict=False)[0]
             else:
@@ -128,7 +128,7 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval
 
             # also train on target domain images if conditional
             # (we don't have masks for this domain, so we can't do segmentation-guided; just use blank masks)
-            if config.class_conditional:
+            if config['class_conditional']:
                 target_domain_images = batch['images_target']
                 target_domain_images = target_domain_images.to(device)
 
@@ -137,13 +137,13 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval
                 bs = target_domain_images.shape[0]
 
                 # Sample a random timestep for each image
-                timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bs,), device=target_domain_images.device).long()
+                timesteps = torch.randint(0, noise_scheduler.config['num_train_timesteps'], (bs,), device=target_domain_images.device).long()
 
                 # Add noise to the clean images according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
                 noisy_images = noise_scheduler.add_noise(target_domain_images, noise, timesteps)
 
-                if config.segmentation_guided:
+                if config['segmentation_guided']:
                     # no masks in target domain so just use blank masks
                     noisy_images = torch.cat((noisy_images, torch.zeros_like(noisy_images)), dim=1)
 
@@ -151,7 +151,7 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval
                 class_labels = torch.full([noisy_images.size(0)], 2).long().to(device)
                 # classifier-free guidance
                 a = np.random.uniform()
-                if a <= config.cfg_p_uncond:
+                if a <= config['cfg_p_uncond']:
                     class_labels = torch.zeros_like(class_labels).long()
                 noise_pred = model(noisy_images, timesteps, class_labels=class_labels, return_dict=False)[0]
                 loss_target_domain = F.mse_loss(noise_pred, noise)
@@ -163,7 +163,7 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval
                 optimizer.zero_grad()
 
             progress_bar.update(1)
-            if config.class_conditional:
+            if config['class_conditional']:
                 logs = {"loss": loss.detach().item(), "loss_target_domain": loss_target_domain.detach().item(), 
                         "lr": lr_scheduler.get_last_lr()[0], "step": global_step}
                 writer.add_scalar("loss_target_domain", loss.detach().item(), global_step)
@@ -175,37 +175,37 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval
             global_step += 1
 
         # After each epoch you optionally sample some demo images with evaluate() and save the model
-        if config.model_type == "DDPM":
-            if config.segmentation_guided:
+        if config['model_type == "DDPM"']:
+            if config['segmentation_guided']:
                 pipeline = SegGuidedDDPMPipeline(
                     unet=model.module, scheduler=noise_scheduler, eval_dataloader=eval_dataloader, external_config=config
                 )
             else:
-                if config.class_conditional:
+                if config['class_conditional']:
                     raise NotImplementedError("TODO: Conditional training not implemented for non-seg-guided DDPM")
                 else:
                     pipeline = diffusers.DDPMPipeline(unet=model.module, scheduler=noise_scheduler)
-        elif config.model_type == "DDIM":
-            if config.segmentation_guided:
+        elif config['model_type'] == "DDIM":
+            if config['segmentation_guided']:
                 pipeline = SegGuidedDDIMPipeline(
                     unet=model.module, scheduler=noise_scheduler, eval_dataloader=eval_dataloader, external_config=config
                 )
             else:
-                if config.class_conditional:
+                if config['class_conditional']:
                     raise NotImplementedError("TODO: Conditional training not implemented for non-seg-guided DDIM")
                 else:
                     pipeline = diffusers.DDIMPipeline(unet=model.module, scheduler=noise_scheduler)
 
         model.eval()
 
-        if (epoch + 1) % config.save_image_epochs == 0 or epoch == config.num_epochs - 1:
+        if (epoch + 1) % config['save_image_epochs'] == 0 or epoch == config['num_epochs'] - 1:
             print("******* saving images *****")
-            print("output dir ", config.output_dir)
-            if config.segmentation_guided:
+            print("output dir ", config['output_dir'])
+            if config['segmentation_guided']:
                 for seg_batch in tqdm(eval_dataloader):
                     evaluate(config, epoch, pipeline, seg_batch)        # evaluate only saves synthetic images
             else:
                 evaluate(config, epoch, pipeline)
 
-        if (epoch + 1) % config.save_model_epochs == 0 or epoch == config.num_epochs - 1:
-            pipeline.save_pretrained(config.output_dir)
+        if (epoch + 1) % config['save_model_epochs'] == 0 or epoch == config['num_epochs'] - 1:
+            pipeline.save_pretrained(config['output_dir'])
