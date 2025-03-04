@@ -1,0 +1,50 @@
+model_args:
+  mode: train
+  model_type: DDIM  # Updated to match input
+  resume_epoch: null
+
+data_args:
+  img_size: 160
+  num_img_channels: 1
+  dataset: fastMRI_NYU
+  img_dir: "/home/lc2382/project/fastMRI_NYU/nifti"
+  seg_dir: "/home/lc2382/project/segmentation-guided-diffusion/data/seg/"
+  segmentation_guided: false
+  segmentation_channel_mode: single
+  num_segmentation_classes: 2
+
+training_args:
+  train_batch_size: 4  # Updated to match input
+  eval_batch_size: 4  # Updated to match input
+  num_epochs: 200
+  gradient_accumulation_steps: 1
+  learning_rate: 0.00001
+  lr_warmup_steps: 500
+  save_image_epochs: 1
+  save_model_epochs: 1
+  mixed_precision: fp16  # Default remains as 'fp16'
+  output_dir: null
+
+  use_ablated_segmentations: false
+  eval_noshuffle_dataloader: false
+  seed: 0
+
+test_args:
+  eval_batch_size: 4
+  eval_mask_removal: false
+  eval_blank_mask: false
+  eval_sample_size: 1000
+
+experimental_args:
+  class_conditional: false
+  cfg_p_uncond: 0.2
+  cfg_weight: 0.3
+  trans_noise_level: 0.5
+  use_cfg_for_eval_conditioning: true
+  cfg_maskguidance_condmodel_only: true
+
+additional_args:
+  push_to_hub: false
+  hub_private_repo: false
+  overwrite_output_dir: true
+  debug_save_image: true
