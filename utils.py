@@ -36,8 +36,8 @@ def parse_3d_volumes(dset_dict, seg_type, csv_file=None):
         labels_dict = {}
         for _, row in labels_df.iterrows():
             # Convert patient_id to string and slice_idx to integer for consistency.
-            key = (f"{int(row['fastmri_pt_id']):03d}", int(row['slice']-1))     # row['slice']-1 to match the Python indexing
-            labels_dict[key] = row['PIRADS']
+            key = (f"{int(row['fastmri_pt_id']):03d}", int(row['slice']-1))     # slice_idx: row['slice']-1 to match the Python indexing
+            labels_dict[key] = row['PIRADS'] - 1        # PI-RADS - 1 as true class labels for nn.Embeddings
     else:
         labels_dict = {}
     

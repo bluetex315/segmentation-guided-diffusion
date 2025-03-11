@@ -110,6 +110,8 @@ def main(
     slices_dset_list_val = parse_3d_volumes(dset_dict_val, seg_type, csv_file=config['label_csv_dir'])
     slices_dset_list_test = parse_3d_volumes(dset_dict_test, seg_type, csv_file=config['label_csv_dir'])
     
+    print("main line113", slices_dset_list_train[0])
+    
     norm_key, tot_key = [], []
     if config['img_dir'] is not None:
         norm_key.append('image')
@@ -188,6 +190,13 @@ def main(
         elif config['segmentation_channel_mode'] == "multi":
             in_channels = len(seg_types) + in_channels
 
+        if config['class_conditional']:
+            # in_channels += 1
+            num_class_embeds = config['num_class_embeds']
+        else:
+            num_class_embeds = None
+
+
     model = diffusers.UNet2DModel(
         sample_size=config['img_size'],  # the target image resolution
         in_channels=in_channels,  # the number of input channels, 3 for RGB images
@@ -210,6 +219,8 @@ def main(
             "UpBlock2D",
             "UpBlock2D"
         ),
+        class_embed_type=None,
+        num_class_embeds=num_class_embeds
     )
 
     if (config['mode'] == "train" and config['resume_epoch'] is not None) or "eval" in config['mode']:

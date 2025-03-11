@@ -109,15 +109,21 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval
                 noisy_images = add_segmentations_to_noise(noisy_images, batch, config, device)
 
             # Predict the noise residual
-            if config['class_conditional']:
-                class_labels = torch.ones(noisy_images.size(0)).long().to(device)
+            # if config['class_conditional']:
+                # class_labels = torch.ones(noisy_images.size(0)).long().to(device)
                 # classifier-free guidance
-                a = np.random.uniform()
-                if a <= config['cfg_p_uncond']:
-                    class_labels = torch.zeros_like(class_labels).long()
+                # a = np.random.uniform()
+                # if a <= config['cfg_p_uncond']:
+                #     class_labels = torch.zeros_like(class_labels).long()
+                # noise_pred = model(noisy_images, timesteps, class_labels=class_labels, return_dict=False)[0]
+
+
+            if config['class_conditional']:
+                class_labels = batch['class_label'].long().to(device)
                 noise_pred = model(noisy_images, timesteps, class_labels=class_labels, return_dict=False)[0]
             else:
                 noise_pred = model(noisy_images, timesteps, return_dict=False)[0]
+
             loss = F.mse_loss(noise_pred, noise)
             loss.backward()
 
@@ -128,44 +134,45 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval
 
             # also train on target domain images if conditional
             # (we don't have masks for this domain, so we can't do segmentation-guided; just use blank masks)
-            if config['class_conditional']:
-                target_domain_images = batch['images_target']
-                target_domain_images = target_domain_images.to(device)
+            # if config['class_conditional']:
+            #     target_domain_images = batch['images_target']
+            #     target_domain_images = target_domain_images.to(device)
 
-                # Sample noise to add to the images
-                noise = torch.randn(target_domain_images.shape).to(target_domain_images.device)
-                bs = target_domain_images.shape[0]
+            #     # Sample noise to add to the images
+            #     noise = torch.randn(target_domain_images.shape).to(target_domain_images.device)
+            #     bs = target_domain_images.shape[0]
 
-                # Sample a random timestep for each image
-                timesteps = torch.randint(0, noise_scheduler.config['num_train_timesteps'], (bs,), device=target_domain_images.device).long()
+            #     # Sample a random timestep for each image
+            #     timesteps = torch.randint(0, noise_scheduler.config['num_train_timesteps'], (bs,), device=target_domain_images.device).long()
 
-                # Add noise to the clean images according to the noise magnitude at each timestep
-                # (this is the forward diffusion process)
-                noisy_images = noise_scheduler.add_noise(target_domain_images, noise, timesteps)
+            #     # Add noise to the clean images according to the noise magnitude at each timestep
+            #     # (this is the forward diffusion process)
+            #     noisy_images = noise_scheduler.add_noise(target_domain_images, noise, timesteps)
 
-                if config['segmentation_guided']:
-                    # no masks in target domain so just use blank masks
-                    noisy_images = torch.cat((noisy_images, torch.zeros_like(noisy_images)), dim=1)
+            #     if config['segmentation_guided']:
+            #         # no masks in target domain so just use blank masks
+            #         noisy_images = torch.cat((noisy_images, torch.zeros_like(noisy_images)), dim=1)
 
-                # Predict the noise residual
-                class_labels = torch.full([noisy_images.size(0)], 2).long().to(device)
-                # classifier-free guidance
-                a = np.random.uniform()
-                if a <= config['cfg_p_uncond']:
-                    class_labels = torch.zeros_like(class_labels).long()
-                noise_pred = model(noisy_images, timesteps, class_labels=class_labels, return_dict=False)[0]
-                loss_target_domain = F.mse_loss(noise_pred, noise)
-                loss_target_domain.backward()
+            #     # Predict the noise residual
+            #     class_labels = torch.full([noisy_images.size(0)], 2).long().to(device)
+            #     # classifier-free guidance
+            #     a = np.random.uniform()
+            #     if a <= config['cfg_p_uncond']:
+            #         class_labels = torch.zeros_like(class_labels).long()
+            #     noise_pred = model(noisy_images, timesteps, class_labels=class_labels, return_dict=False)[0]
+            #     loss_target_domain = F.mse_loss(noise_pred, noise)
+            #     loss_target_domain.backward()
 
-                nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
+            #     nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            #     optimizer.step()
+            #     lr_scheduler.step()
+            #     optimizer.zero_grad()
 
             progress_bar.update(1)
             if config['class_conditional']:
-                logs = {"loss": loss.detach().item(), "loss_target_domain": loss_target_domain.detach().item(), 
-                        "lr": lr_scheduler.get_last_lr()[0], "step": global_step}
+                logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0], "step": global_step}
+                # logs = {"loss": loss.detach().item(), "loss_target_domain": loss_target_domain.detach().item(), 
+                #         "lr": lr_scheduler.get_last_lr()[0], "step": global_step}
                 writer.add_scalar("loss_target_domain", loss.detach().item(), global_step)
             else: 
                 logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0], "step": global_step}
