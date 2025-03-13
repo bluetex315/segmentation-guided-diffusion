@@ -374,7 +374,7 @@ def evaluate(config, epoch, pipeline, seg_batch=None, class_label_cfg=None, tran
 
     if config['segmentation_guided']:
         images = pipeline(
-            batch_size = config['eval_batch_size'],
+            batch_size = len(seg_batch['image']),
             seg_batch=seg_batch,
             class_label_cfg=class_label_cfg,
             translate=translate
@@ -407,22 +407,32 @@ def evaluate(config, epoch, pipeline, seg_batch=None, class_label_cfg=None, tran
         print("eval line403 seg_batch keys", seg_batch.keys())
         print("eval line404 seg_batch patient_ids", seg_batch['patient_id'])
         print("eval line405 seg_batch slice_idx", seg_batch['slice_idx'])
-        
+
+        if config['class_conditional']:
+            print("eval line406 seg_batch class labels", seg_batch['class_label'])
+            # Get the class label for the current sample; ensure it's converted to string if needed.
+      
         # save images
         for i in range(len(images)):        # images: List
             pid = seg_batch['patient_id'][i]
             sidx = seg_batch['slice_idx'][i]
-
+            if config['class_conditional']:
+                clabel = seg_batch['class_label'][i]
+                # You can adjust the formatting as necessary.
+                clabel_str = f"_class_{clabel}"
+            else:
+                clabel_str = ""
+                
             # save synthetic images
             syn_img_np = images[i, ..., 0]      # np.ndarray
             nifti_syn_img = nib.Nifti1Image(syn_img_np, affine=np.eye(4))
-            syn_img_filename = os.path.join(epoch_test_dir, f"{epoch:04d}_{pid}_slice_{sidx}_syn.nii.gz")
+            syn_img_filename = os.path.join(epoch_test_dir, f"{epoch:04d}_{pid}_slice_{sidx}{clabel_str}_syn.nii.gz")
             nib.save(nifti_syn_img, syn_img_filename)
 
             # save original images
             orig_img_np = seg_batch['image'][i, 0, ...].cpu().numpy()  # Move to CPU if necessary and convert to NumPy
             nifti_orig_img = nib.Nifti1Image(orig_img_np, affine=np.eye(4))
-            orig_img_filename = os.path.join(epoch_test_dir, f"{epoch:04d}_{pid}_slice_{sidx}_orig.nii.gz")
+            orig_img_filename = os.path.join(epoch_test_dir, f"{epoch:04d}_{pid}_slice_{sidx}{clabel_str}_orig.nii.gz")
             nib.save(nifti_orig_img, orig_img_filename)
 
             # save segmentation mask, support multiple masks
@@ -430,7 +440,7 @@ def evaluate(config, epoch, pipeline, seg_batch=None, class_label_cfg=None, tran
                 if seg_type.startswith("seg_"):
                     segm_np = seg_batch[seg_type][i, 0, ...].cpu().numpy()  # Move to CPU if necessary and convert to NumPy
                     nifti_segm = nib.Nifti1Image(segm_np, affine=np.eye(4))
-                    segm_filename = os.path.join(epoch_test_dir, f"{epoch:04d}_{pid}_slice_{sidx}_cond_segm_{seg_type}.nii.gz")
+                    segm_filename = os.path.join(epoch_test_dir, f"{epoch:04d}_{pid}_slice_{sidx}{clabel_str}_cond_segm_{seg_type}.nii.gz")
                     nib.save(nifti_segm, segm_filename)
                 
         print("<<<<<<<<<<<<<<<<<<< saved original image at inference >>>>>>>>>>>>>>>>>>>>>>>>>>>>")
@@ -678,12 +688,14 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
 
     def __init__(self, unet, scheduler, eval_dataloader, external_config):
         super().__init__()
+        # Wrap the external_config so it behaves like a module
+        # wrapped_external_config = SimpleNamespace(**external_config)
         wrapped_external_config = ConfigWrapper(external_config)
         self.register_modules(unet=unet, scheduler=scheduler, eval_dataloader=eval_dataloader, external_config=wrapped_external_config)
         # ^ some reason necessary for DDIM but not DDPM.
 
         self.eval_dataloader = eval_dataloader
-        self.external_config = external_config # config is already a thing
+        self.external_config = wrapped_external_config # config is already a thing
 
         # make sure scheduler can always be converted to DDIM
         scheduler = DDIMScheduler.from_config(scheduler.config)
@@ -746,20 +758,20 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
         """
 
         # Sample gaussian noise to begin loop
-        if self.external_config['segmentation_channel_mode'] == "single":
+        if self.external_config.config['segmentation_channel_mode'] == "single":
             img_channel_ct = self.unet.config.in_channels - 1
-        elif self.external_config['segmentation_channel_mode'] == "multi":
+        elif self.external_config.config['segmentation_channel_mode'] == "multi":
             img_channel_ct = self.unet.config.in_channels - len([k for k in seg_batch.keys() if k.startswith("seg_")])
 
         if isinstance(self.unet.config.sample_size, int):
-            if self.external_config['segmentation_channel_mode'] == "single":
+            if self.external_config.config['segmentation_channel_mode'] == "single":
                 image_shape = (
                     batch_size,
                     self.unet.config.in_channels - 1,
                     self.unet.config.sample_size,
                     self.unet.config.sample_size,
                 )
-            elif self.external_config['segmentation_channel_mode'] == "multi":
+            elif self.external_config.config['segmentation_channel_mode'] == "multi":
                 image_shape = (
                     batch_size,
                     self.unet.config.in_channels - len([k for k in seg_batch.keys() if k.startswith("seg_")]),
@@ -767,9 +779,9 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
                     self.unet.config.sample_size,
                 )
         else:
-            if self.external_config['segmentation_channel_mode'] == "single":
+            if self.external_config.config['segmentation_channel_mode'] == "single":
                 image_shape = (batch_size, self.unet.config.in_channels - 1, *self.unet.config.sample_size)
-            elif self.external_config['segmentation_channel_mode'] == "multi":
+            elif self.external_config.config['segmentation_channel_mode'] == "multi":
                 image_shape = (batch_size, self.unet.config.in_channels - len([k for k in seg_batch.keys() if k.startswith("seg_")]), *self.unet.config.sample_size)
             
         if isinstance(generator, list) and len(generator) != batch_size:
@@ -784,7 +796,7 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
             image = randn_tensor(image_shape, generator=generator, device=self._execution_device, dtype=self.unet.dtype)
         else:
             # image translation sampling; start from source domain images, add noise up to certain step, then being there for denoising
-            trans_start_t = int(self.external_config['trans_noise_level'] * self.scheduler.config.num_train_timesteps)
+            trans_start_t = int(self.external_config.config['trans_noise_level'] * self.scheduler.config.num_train_timesteps)
 
             trans_start_images = seg_batch["images"].to(self._execution_device)
 
@@ -809,15 +821,15 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
 
             # 1. predict noise model_output
             # first, concat segmentations to noise
-            image = add_segmentations_to_noise(image, seg_batch, self.external_config, self.device)
+            image = add_segmentations_to_noise(image, seg_batch, self.external_config.config, self.device)
 
-            if self.external_config['class_conditional']:
+            if self.external_config.config['class_conditional']:
                 if class_label_cfg is not None:
                     class_labels = torch.full([image.size(0)], class_label_cfg).long().to(self.device)
                     model_output_cond = self.unet(image, t, class_labels=class_labels).sample
-                    if self.external_config['use_cfg_for_eval_conditioning']:
+                    if self.external_config.config['use_cfg_for_eval_conditioning']:
                         # use classifier-free guidance for sampling from the given class
-                        if self.external_config['cfg_maskguidance_condmodel_only']:
+                        if self.external_config.config['cfg_maskguidance_condmodel_only']:
                             image_emptymask = torch.cat((image[:, :img_channel_ct, :, :], torch.zeros_like(image[:, img_channel_ct:, :, :])), dim=1)
                             model_output_uncond = self.unet(image_emptymask, t, 
                                     class_labels=torch.zeros_like(class_labels).long()).sample
@@ -826,16 +838,16 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
                                     class_labels=torch.zeros_like(class_labels).long()).sample
 
                         # use cfg equation
-                        model_output = (1. + self.external_config['cfg_weight']) * model_output_cond - self.external_config['cfg_weight'] * model_output_uncond
+                        model_output = (1. + self.external_config.config['cfg_weight']) * model_output_cond - self.external_config.config['cfg_weight'] * model_output_uncond
                     else:
                         model_output = model_output_cond
                
                 else:
-                    # or, just use basic network conditioning to sample from both classes
-                    if self.external_config['class_conditional']:
-                        # if training conditionally, evaluate source domain samples
-                        class_labels = torch.ones(image.size(0)).long().to(self.device)
-                        model_output = self.unet(image, t, class_labels=class_labels).sample
+                    
+                    # if training conditionally, evaluate source domain samples
+                    # class_labels = torch.ones(image.size(0)).long().to(self.device)
+                    class_labels = seg_batch['class_label'].long().to(self.device)
+                    model_output = self.unet(image, t, class_labels=class_labels).sample
             else:
                 model_output = self.unet(image, t).sample
 
@@ -851,36 +863,36 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
 
         # if training conditionally, also evaluate for target domain images
         # if not using chosen class for CFG
-        if self.external_config['class_conditional'] and class_label_cfg is None:
-            image_target_domain = randn_tensor(image_shape, generator=generator, device=self._execution_device, dtype=self.unet.dtype)
+        # if self.external_config.config['class_conditional'] and class_label_cfg is None:
+        #     image_target_domain = randn_tensor(image_shape, generator=generator, device=self._execution_device, dtype=self.unet.dtype)
 
-            # set step values
-            self.scheduler.set_timesteps(num_inference_steps)
+        #     # set step values
+        #     self.scheduler.set_timesteps(num_inference_steps)
 
-            for t in self.progress_bar(self.scheduler.timesteps):
-                # 1. predict noise model_output
-                # first, concat segmentations to noise
-                # no masks in target domain so just use blank masks
-                image_target_domain = torch.cat((image_target_domain, torch.zeros_like(image_target_domain)), dim=1)
+        #     for t in self.progress_bar(self.scheduler.timesteps):
+        #         # 1. predict noise model_output
+        #         # first, concat segmentations to noise
+        #         # no masks in target domain so just use blank masks
+        #         image_target_domain = torch.cat((image_target_domain, torch.zeros_like(image_target_domain)), dim=1)
 
-                if self.external_config['class_conditional']:
-                    # if training conditionally, also evaluate unconditional model and target domain (no masks)
-                    class_labels = torch.cat([torch.full([image_target_domain.size(0) // 2], 2), torch.zeros(image_target_domain.size(0) // 2)]).long().to(self.device)
-                    model_output = self.unet(image_target_domain, t, class_labels=class_labels).sample
-                else:
-                    model_output = self.unet(image_target_domain, t).sample
+        #         if self.external_config.config['class_conditional']:
+        #             # if training conditionally, also evaluate unconditional model and target domain (no masks)
+        #             class_labels = torch.cat([torch.full([image_target_domain.size(0) // 2], 2), torch.zeros(image_target_domain.size(0) // 2)]).long().to(self.device)
+        #             model_output = self.unet(image_target_domain, t, class_labels=class_labels).sample
+        #         else:
+        #             model_output = self.unet(image_target_domain, t).sample
 
-                # 2. predict previous mean of image x_t-1 and add variance depending on eta
-                # eta corresponds to η in paper and should be between [0, 1]
-                # do x_t -> x_t-1
-                # but first, we're only adding denoising the image channel (not seg channel),
-                # so remove segs
-                image_target_domain = image_target_domain[:, :img_channel_ct, :, :]
-                image_target_domain = self.scheduler.step(
-                    model_output, t, image_target_domain, eta=eta, use_clipped_model_output=use_clipped_model_output, generator=generator
-                ).prev_sample
+        #         # 2. predict previous mean of image x_t-1 and add variance depending on eta
+        #         # eta corresponds to η in paper and should be between [0, 1]
+        #         # do x_t -> x_t-1
+        #         # but first, we're only adding denoising the image channel (not seg channel),
+        #         # so remove segs
+        #         image_target_domain = image_target_domain[:, :img_channel_ct, :, :]
+        #         image_target_domain = self.scheduler.step(
+        #             model_output, t, image_target_domain, eta=eta, use_clipped_model_output=use_clipped_model_output, generator=generator
+        #         ).prev_sample
 
-            image = torch.cat((image, image_target_domain), dim=0)
+        #     image = torch.cat((image, image_target_domain), dim=0)
             # will output source domain images first, then target domain images
 
         image = (image / 2 + 0.5).clamp(0, 1)

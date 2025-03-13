@@ -182,7 +182,7 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval
             global_step += 1
 
         # After each epoch you optionally sample some demo images with evaluate() and save the model
-        if config['model_type == "DDPM"']:
+        if config['model_type'] == "DDPM":
             if config['segmentation_guided']:
                 pipeline = SegGuidedDDPMPipeline(
                     unet=model.module, scheduler=noise_scheduler, eval_dataloader=eval_dataloader, external_config=config

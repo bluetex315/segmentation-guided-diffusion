@@ -123,7 +123,6 @@ def parse_3d_volumes(dset_dict, seg_type, csv_file=None):
     return selected_slices
 
 
-
 # Split the dataset dictionary into train and test splits
 def train_test_split_dset(dset_dict, test_size=0.2, random_state=42):
     # Create indices for splitting
