@@ -364,6 +364,27 @@ def add_segmentations_to_noise(noisy_images, segmentations_batch, config, device
 
     return noisy_images
 
+
+def add_neighboring_images_to_noise(noisy_images, batch, config, device):
+    """
+    Concatenate neighboring images (e.g., left and right slices) to the noisy image.
+    
+    Args:
+        noisy_images (torch.Tensor): The noisy central images, shape (B, C, H, W).
+        batch (dict): A dictionary containing the neighboring images with keys: "clean_left" and "clean_right", each of shape (B, C, H, W).
+        config (dict): Configuration parameters, must include 'neighboring_image_channel_mode'.
+        device (torch.device): The device to which tensors are moved.
+    
+    Returns:
+        torch.Tensor: The noisy_images tensor with the neighboring images concatenated along the channel dimension.
+    """
+
+    left_images = batch["clean_left"].to(device, dtype=noisy_images.dtype)
+    right_images = batch["clean_right"].to(device, dtype=noisy_images.dtype)
+    noisy_images = torch.cat((noisy_images, left_images, right_images), dim=1)
+    
+    return noisy_images
+
 ####################
 # general DDPM
 ####################
@@ -381,7 +402,7 @@ def evaluate(config, epoch, pipeline, seg_batch=None, class_label_cfg=None, tran
         ).images
     else:
         images = pipeline(
-            batch_size = config['eval_batch_size'],
+            batch_size = len(seg_batch['image']),
             # TODO: implement CFG and naive conditioning sampling for non-seg-guided pipelines (also needed for translation)
         ).images
 
@@ -763,14 +784,25 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
         elif self.external_config.config['segmentation_channel_mode'] == "multi":
             img_channel_ct = self.unet.config.in_channels - len([k for k in seg_batch.keys() if k.startswith("seg_")])
 
+        if self.external_config.config['neighboring_images_guided']:    # discard clean_left and clean_right for denoising scheduler
+            img_channel_ct -= 2
+
         if isinstance(self.unet.config.sample_size, int):
             if self.external_config.config['segmentation_channel_mode'] == "single":
-                image_shape = (
-                    batch_size,
-                    self.unet.config.in_channels - 1,
-                    self.unet.config.sample_size,
-                    self.unet.config.sample_size,
-                )
+                if self.external_config.config['neighboring_images_guided']:        # -1 for seg, -2 for neighboring slices
+                    image_shape = (
+                        batch_size,
+                        self.unet.config.in_channels - 1 - 2,
+                        self.unet.config.sample_size,
+                        self.unet.config.sample_size,
+                    )
+                else:
+                    image_shape = (
+                        batch_size,
+                        self.unet.config.in_channels - 1,
+                        self.unet.config.sample_size,
+                        self.unet.config.sample_size,
+                    )
             elif self.external_config.config['segmentation_channel_mode'] == "multi":
                 image_shape = (
                     batch_size,
@@ -780,7 +812,19 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
                 )
         else:
             if self.external_config.config['segmentation_channel_mode'] == "single":
-                image_shape = (batch_size, self.unet.config.in_channels - 1, *self.unet.config.sample_size)
+                if self.external_config.config['neighboring_images_guided']:        # -1 for seg, -2 for neighboring slices
+                    image_shape = (
+                        batch_size,
+                        self.unet.config.in_channels - 1 - 2,
+                        *self.unet.config.sample_size,
+                    )
+                else:
+                    image_shape = (
+                        batch_size,
+                        self.unet.config.in_channels - 1,
+                        *self.unet.config.sample_size,
+                    )
+
             elif self.external_config.config['segmentation_channel_mode'] == "multi":
                 image_shape = (batch_size, self.unet.config.in_channels - len([k for k in seg_batch.keys() if k.startswith("seg_")]), *self.unet.config.sample_size)
             
@@ -823,6 +867,10 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
             # first, concat segmentations to noise
             image = add_segmentations_to_noise(image, seg_batch, self.external_config.config, self.device)
 
+            # Concatenate neighboring slices
+            if self.external_config.config['neighboring_images_guided']:
+                image = add_neighboring_images_to_noise(image, seg_batch, self.external_config.config, self.device)
+                
             if self.external_config.config['class_conditional']:
                 if class_label_cfg is not None:
                     class_labels = torch.full([image.size(0)], class_label_cfg).long().to(self.device)
@@ -843,7 +891,6 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
                         model_output = model_output_cond
                
                 else:
-                    
                     # if training conditionally, evaluate source domain samples
                     # class_labels = torch.ones(image.size(0)).long().to(self.device)
                     class_labels = seg_batch['class_label'].long().to(self.device)
@@ -895,7 +942,7 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
         #     image = torch.cat((image, image_target_domain), dim=0)
             # will output source domain images first, then target domain images
 
-        image = (image / 2 + 0.5).clamp(0, 1)
+        # image = (image / 2 + 0.5).clamp(0, 1)
         image = image.cpu().permute(0, 2, 3, 1).numpy()
         if output_type == "pil":
             image = self.numpy_to_pil(image)

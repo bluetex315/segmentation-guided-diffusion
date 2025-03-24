@@ -19,7 +19,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 import diffusers
 
-from eval import evaluate, add_segmentations_to_noise, SegGuidedDDPMPipeline, SegGuidedDDIMPipeline
+from eval import evaluate, add_segmentations_to_noise, add_neighboring_images_to_noise, SegGuidedDDPMPipeline, SegGuidedDDIMPipeline
 
 @dataclass
 class TrainingConfig:
@@ -107,6 +107,9 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval
 
             if config['segmentation_guided']:
                 noisy_images = add_segmentations_to_noise(noisy_images, batch, config, device)
+
+            if config['neighboring_images_guided']:
+                noisy_images = add_neighboring_images_to_noise(noisy_images, batch, config, device)
 
             # Predict the noise residual
             # if config['class_conditional']:

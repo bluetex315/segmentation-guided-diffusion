@@ -7,6 +7,7 @@ from torch import nn
 from torchvision import transforms
 import torch.nn.functional as F
 import numpy as np
+from torchinfo import summary
 
 # HF imports
 import diffusers
@@ -110,14 +111,21 @@ def main(
     slices_dset_list_val = parse_3d_volumes(dset_dict_val, seg_type, csv_file=config['label_csv_dir'])
     slices_dset_list_test = parse_3d_volumes(dset_dict_test, seg_type, csv_file=config['label_csv_dir'])
     
-    print("main line113", slices_dset_list_train[0])
+    print("main line113", slices_dset_list_train[0].keys())
     
     norm_key, tot_key = [], []
     if config['img_dir'] is not None:
         norm_key.append('image')
         tot_key.append('image')
+
     if config['segmentation_guided']:
         tot_key.append(seg_key)
+    
+    if config['neighboring_images_guided']:
+        tot_key.append('clean_left')
+        tot_key.append('clean_right')
+        norm_key.append('clean_left')
+        norm_key.append('clean_right')
 
     train_transforms = Compose([
 
@@ -189,6 +197,9 @@ def main(
             in_channels += 1
         elif config['segmentation_channel_mode'] == "multi":
             in_channels = len(seg_types) + in_channels
+        
+        if config['neighboring_images_guided']:     # concat clean_left and clean_right to noisy_images
+            in_channels += 2    
 
         if config['class_conditional']:
             # in_channels += 1
@@ -222,6 +233,15 @@ def main(
         class_embed_type=None,
         num_class_embeds=num_class_embeds
     )
+
+
+    dummy_sample = torch.randn(1, in_channels, config['img_size'], config['img_size'])
+    dummy_timestep = torch.tensor([50])
+    dummy_class_label = torch.tensor([0])
+
+    print("")
+    summary(model, input_data=(dummy_sample, dummy_timestep, dummy_class_label))
+    print("")
 
     if (config['mode'] == "train" and config['resume_epoch'] is not None) or "eval" in config['mode']:
         if config['mode'] == "train":
