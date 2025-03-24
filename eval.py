@@ -443,17 +443,21 @@ def evaluate(config, epoch, pipeline, seg_batch=None, class_label_cfg=None, tran
                 clabel_str = f"_class_{clabel}"
             else:
                 clabel_str = ""
-                
+
+            # Create a folder for the current patient if it doesn't exist
+            patient_dir = os.path.join(epoch_test_dir, f"patient_{pid}")
+            os.makedirs(patient_dir, exist_ok=True)
+            
             # save synthetic images
             syn_img_np = images[i, ..., 0]      # np.ndarray
             nifti_syn_img = nib.Nifti1Image(syn_img_np, affine=np.eye(4))
-            syn_img_filename = os.path.join(epoch_test_dir, f"{epoch:04d}_{pid}_slice_{sidx}{clabel_str}_syn.nii.gz")
+            syn_img_filename = os.path.join(patient_dir, f"{epoch:04d}_{pid}_slice_{sidx}{clabel_str}_syn.nii.gz")
             nib.save(nifti_syn_img, syn_img_filename)
 
             # save original images
             orig_img_np = seg_batch['image'][i, 0, ...].cpu().numpy()  # Move to CPU if necessary and convert to NumPy
             nifti_orig_img = nib.Nifti1Image(orig_img_np, affine=np.eye(4))
-            orig_img_filename = os.path.join(epoch_test_dir, f"{epoch:04d}_{pid}_slice_{sidx}{clabel_str}_orig.nii.gz")
+            orig_img_filename = os.path.join(patient_dir, f"{epoch:04d}_{pid}_slice_{sidx}{clabel_str}_orig.nii.gz")
             nib.save(nifti_orig_img, orig_img_filename)
 
             # save segmentation mask, support multiple masks
@@ -461,7 +465,7 @@ def evaluate(config, epoch, pipeline, seg_batch=None, class_label_cfg=None, tran
                 if seg_type.startswith("seg_"):
                     segm_np = seg_batch[seg_type][i, 0, ...].cpu().numpy()  # Move to CPU if necessary and convert to NumPy
                     nifti_segm = nib.Nifti1Image(segm_np, affine=np.eye(4))
-                    segm_filename = os.path.join(epoch_test_dir, f"{epoch:04d}_{pid}_slice_{sidx}{clabel_str}_cond_segm_{seg_type}.nii.gz")
+                    segm_filename = os.path.join(patient_dir, f"{epoch:04d}_{pid}_slice_{sidx}{clabel_str}_cond_segm_{seg_type}.nii.gz")
                     nib.save(nifti_segm, segm_filename)
                 
         print("<<<<<<<<<<<<<<<<<<< saved original image at inference >>>>>>>>>>>>>>>>>>>>>>>>>>>>")
