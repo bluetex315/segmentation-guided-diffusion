@@ -161,9 +161,9 @@ def main(
         ToTensord(keys=tot_key)
     ])
 
-    train_dataset = monai.data.Dataset(slices_dset_list_train[:20], transform=train_transforms)
-    val_dataset = monai.data.Dataset(slices_dset_list_val[:200], transform=eval_transforms)
-    test_dataset = monai.data.Dataset(slices_dset_list_test[:200], transform=eval_transforms)
+    train_dataset = monai.data.Dataset(slices_dset_list_train, transform=train_transforms)
+    val_dataset = monai.data.Dataset(slices_dset_list_val, transform=eval_transforms)
+    test_dataset = monai.data.Dataset(slices_dset_list_test, transform=eval_transforms)
     
     print(f"Length of train_dataset is {len(train_dataset)}")
     print(f"Length of val_dataset is {len(val_dataset)}")
