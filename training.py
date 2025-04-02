@@ -8,12 +8,14 @@ from pathlib import Path
 from tqdm.auto import tqdm
 import numpy as np
 from datetime import timedelta
-
+import imageio
+import nibabel as nib
 
 import torch
 from torch import nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, RandomSampler
+import torchvision
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -21,50 +23,50 @@ import diffusers
 
 from eval import evaluate, add_segmentations_to_noise, add_neighboring_images_to_noise, SegGuidedDDPMPipeline, SegGuidedDDIMPipeline
 
-@dataclass
-class TrainingConfig:
-    mode: str = "train"
-    model_type: str = "DDPM"
-    image_size: int = 160  # the generated image resolution
-    train_batch_size: int = 32
-    eval_batch_size: int = 8  # how many images to sample during evaluation
-    num_img_channels: int = None
-    img_dir: str = None
-    seg_dir: str = None
-    seg_type: str = None
-    num_epochs: int = 200
-    gradient_accumulation_steps: int = 1
-    learning_rate: float = 1e-4
-    lr_warmup_steps: int = 500
-    save_image_epochs: int = 20
-    save_model_epochs: int = 30
-    mixed_precision: str = 'fp16'  # `no` for float32, `fp16` for automatic mixed precision
-    output_dir: str = None
+# @dataclass
+# class TrainingConfig:
+#     mode: str = "train"
+#     model_type: str = "DDPM"
+#     image_size: int = 160  # the generated image resolution
+#     train_batch_size: int = 32
+#     eval_batch_size: int = 8  # how many images to sample during evaluation
+#     num_img_channels: int = None
+#     img_dir: str = None
+#     seg_dir: str = None
+#     seg_type: str = None
+#     num_epochs: int = 200
+#     gradient_accumulation_steps: int = 1
+#     learning_rate: float = 1e-4
+#     lr_warmup_steps: int = 500
+#     save_image_epochs: int = 20
+#     save_model_epochs: int = 30
+#     mixed_precision: str = 'fp16'  # `no` for float32, `fp16` for automatic mixed precision
+#     output_dir: str = None
 
-    push_to_hub: bool = False  # whether to upload the saved model to the HF Hub
-    hub_private_repo: bool = False
-    overwrite_output_dir: bool = True  # overwrite the old model when re-running the notebook
-    seed: int = 0
+#     push_to_hub: bool = False  # whether to upload the saved model to the HF Hub
+#     hub_private_repo: bool = False
+#     overwrite_output_dir: bool = True  # overwrite the old model when re-running the notebook
+#     seed: int = 0
 
-    # custom options
-    segmentation_guided: bool = False
-    segmentation_channel_mode: str = "single"
-    num_segmentation_classes: int = None # INCLUDING background
-    use_ablated_segmentations: bool = False
-    dataset: str = "breast_mri"
-    resume_epoch: int = None
+#     # custom options
+#     segmentation_guided: bool = False
+#     segmentation_channel_mode: str = "single"
+#     num_segmentation_classes: int = None # INCLUDING background
+#     use_ablated_segmentations: bool = False
+#     dataset: str = "breast_mri"
+#     resume_epoch: int = None
 
-    # EXPERIMENTAL/UNTESTED: classifier-free class guidance and image translation
-    class_conditional: bool = False
-    cfg_p_uncond: float = 0.2 # p_uncond in classifier-free guidance paper
-    cfg_weight: float = 0.3 # w in the paper
-    trans_noise_level: float = 0.5 # ratio of time step t to noise trans_start_images to total T before denoising in translation. e.g. value of 0.5 means t = 500 for default T = 1000.
-    use_cfg_for_eval_conditioning: bool = True  # whether to use classifier-free guidance for or just naive class conditioning for main sampling loop
-    cfg_maskguidance_condmodel_only: bool = True  # if using mask guidance AND cfg, only give mask to conditional network
-    # ^ this is because giving mask to both uncond and cond model make class guidance not work 
-    # (see "Classifier-free guidance resolution weighting." in ControlNet paper)
+#     # EXPERIMENTAL/UNTESTED: classifier-free class guidance and image translation
+#     class_conditional: bool = False
+#     cfg_p_uncond: float = 0.2 # p_uncond in classifier-free guidance paper
+#     cfg_weight: float = 0.3 # w in the paper
+#     trans_noise_level: float = 0.5 # ratio of time step t to noise trans_start_images to total T before denoising in translation. e.g. value of 0.5 means t = 500 for default T = 1000.
+#     use_cfg_for_eval_conditioning: bool = True  # whether to use classifier-free guidance for or just naive class conditioning for main sampling loop
+#     cfg_maskguidance_condmodel_only: bool = True  # if using mask guidance AND cfg, only give mask to conditional network
+#     # ^ this is because giving mask to both uncond and cond model make class guidance not work 
+#     # (see "Classifier-free guidance resolution weighting." in ControlNet paper)
     
-    debug_save_image: bool = True
+#     debug_save_image: bool = True
 
 def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval_dataloader, lr_scheduler, device='cuda'):
     # Prepare everything
@@ -98,9 +100,74 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval
             noise = torch.randn(clean_images.shape).to(clean_images.device)
             bs = clean_images.shape[0]
 
+            if config['save_forward_process']:
+                if epoch == 0 and step == 0:
+                    subset_images = clean_images[:4]        # take the first four images
+                    patient_id = batch['patient_id'][:4]
+                    slice_idx = batch['slice_idx'][:4]
+                    print("Training line 106", patient_id, slice_idx)
+
+                    time_steps = [0, 200, 400, 600, 800, 999]
+
+                    forward_outputs = []
+
+                    for t in time_steps:
+                        
+                        # Create a tensor for the specific timestep (same for all images in the subset)
+                        t_tensor = torch.tensor([t] * subset_images.shape[0], device=device).long()
+                        # Sample noise for these images
+                        noise_subset = torch.randn_like(subset_images)
+                        # Add noise using the forward diffusion process at the given timestep
+                        noisy_subset = noise_scheduler.add_noise(subset_images, noise_subset, t_tensor)
+                        forward_outputs.append(noisy_subset)        # shape [4, C, H, W]
+
+                        if t == 0:
+                            nifti_save_dir = os.path.join(config['output_dir'], "training", "noisy_images_forward")
+                            os.makedirs(nifti_save_dir, exist_ok=True)
+
+                            # Convert the subset images to a NumPy array.
+                            # subset_images is a torch.Tensor of shape [4, C, H, W]
+                            noisy_subset_np = noisy_subset.cpu().numpy()  
+
+                            # Save each image as a separate NIfTI file.
+                            for i in range(noisy_subset_np.shape[0]):
+                                image_np = noisy_subset_np[i]  # shape: [C, H, W]
+                                
+                                # If the image is grayscale (C==1), remove the channel dimension.
+                                if image_np.shape[0] == 1:
+                                    image_np = np.squeeze(image_np, axis=0)  # Now shape is [H, W]
+                                
+                                # Define an identity affine (you can customize this if needed).
+                                affine = np.eye(4)
+                                
+                                # Create a NIfTI image.
+                                nifti_image = nib.Nifti1Image(image_np, affine)
+                                
+                                # Define a save path for this image.
+                                nifti_save_path = os.path.join(nifti_save_dir, f"subset_image_{i}_patient{patient_id[i]}_slice{slice_idx[i]}_step{step}.nii.gz")
+                                
+                                # Save the image.
+                                nib.save(nifti_image, nifti_save_path)
+                                print(f"Saved subset image {i} as NIfTI at: {nifti_save_path}")
+
+                    forward_outputs_tensor = torch.stack(forward_outputs, dim=0).permute(1, 0, 2, 3, 4)         # shape [4, 6, C, H, W].
+                    B, T, C, H, W = forward_outputs_tensor.shape  # B=4, T=6, etc.
+                    forward_outputs_tensor = forward_outputs_tensor.reshape(B * T, C, H, W)
+                    forward_outputs_tensor = torch.rot90(forward_outputs_tensor, k=1, dims=[2, 3])
+
+                    # Prepare save path and save the grid image using your custom save function.
+                    train_save_dir = os.path.join(config['output_dir'], "training", "noisy_images_forward")
+                    os.makedirs(train_save_dir, exist_ok=True)
+                    train_save_path = os.path.join(train_save_dir, f"noisy_images_epoch{epoch}_step{step}.png")
+
+                    torchvision.utils.save_image(forward_outputs_tensor, train_save_path, nrow=len(time_steps), normalize=True, value_range=(-1, 1))
+
+                    # imageio.imwrite(grid_filename, grid_np_transposed)
+                    print(f"Saved grid image for forward process at {train_save_path}")
+                                    
             # Sample a random timestep for each image
             timesteps = torch.randint(0, noise_scheduler.config['num_train_timesteps'], (bs,), device=clean_images.device).long()
-
+            print("training 103 timesteps", timesteps)
             # Add noise to the clean images according to the noise magnitude at each timestep
             # (this is the forward diffusion process)
             noisy_images = noise_scheduler.add_noise(clean_images, noise, timesteps)
@@ -128,6 +195,7 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval
                 noise_pred = model(noisy_images, timesteps, return_dict=False)[0]
 
             loss = F.mse_loss(noise_pred, noise)
+            print("training 131 loss", loss)
             loss.backward()
 
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)

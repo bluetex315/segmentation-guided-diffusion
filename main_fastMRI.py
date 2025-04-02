@@ -15,7 +15,7 @@ from diffusers.optimization import get_cosine_schedule_with_warmup
 import datasets
 
 # custom imports
-from training import TrainingConfig, train_loop
+from training import train_loop
 from eval import evaluate_generation, evaluate_sample_many
 from utils import make_grid, save_nifti, load_config, flatten_config, parse_3d_volumes, train_test_split_dset
 
@@ -24,7 +24,7 @@ import pickle
 import nibabel as nib
 from sklearn.model_selection import train_test_split
 import monai
-from monai.transforms import Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, NormalizeIntensityd, ToTensord, Orientationd, CenterSpatialCropd, Orientationd
+from monai.transforms import Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, NormalizeIntensityd, ToTensord, Orientationd, CenterSpatialCropd, Orientationd, ScaleIntensityRangePercentilesd
 from datetime import datetime
 
 
@@ -137,8 +137,21 @@ def main(
         # center spatial crop
         CenterSpatialCropd(keys=tot_key, roi_size=(128, 128)),
 
-        # Normalize the 'image' key - zero mean, unit variance normalization
-        NormalizeIntensityd(keys=norm_key),
+        # scale to [0, 1]
+        ScaleIntensityRangePercentilesd(
+            keys=norm_key,
+            lower=2.5, upper=97.5, 
+            b_min=0.0, b_max=1.0, 
+            clip=True, relative=False, 
+            channel_wise=False
+        ),
+        
+        # normalize
+        NormalizeIntensityd(
+            keys=norm_key,
+            subtrahend=0.5,
+            divisor=0.5
+        ),
         
         # Convert 'image' and 'segm' to PyTorch tensors
         ToTensord(keys=tot_key)
@@ -151,12 +164,25 @@ def main(
 
         Orientationd(keys=tot_key, axcodes='LAS'),
         
-        # center spatial crop   config
+        # center spatial crop
         CenterSpatialCropd(keys=tot_key, roi_size=(config['img_size'], config['img_size'])),
 
-        # Normalize the 'image' key - zero mean, unit variance normalization
-        NormalizeIntensityd(keys=norm_key),
+        # scale to [0, 1]
+        ScaleIntensityRangePercentilesd(
+            keys=norm_key,
+            lower=1.0, upper=99.0, 
+            b_min=0.0, b_max=1.0, 
+            clip=True, relative=False, 
+            channel_wise=False
+        ),
         
+        # normalize
+        NormalizeIntensityd(
+            keys=norm_key,
+            subtrahend=0.5,
+            divisor=0.5
+        ),
+
         # Convert 'image' and 'segm' to PyTorch tensors
         ToTensord(keys=tot_key)
     ])
@@ -234,15 +260,19 @@ def main(
         num_class_embeds=num_class_embeds
     )
 
-
     dummy_sample = torch.randn(1, in_channels, config['img_size'], config['img_size'])
     dummy_timestep = torch.tensor([50])
     dummy_class_label = torch.tensor([0])
-
-    print("")
-    summary(model, input_data=(dummy_sample, dummy_timestep, dummy_class_label))
-    print("")
-
+    
+    if config['class_conditional']:
+        print("")
+        summary(model, input_data=(dummy_sample, dummy_timestep, dummy_class_label))
+        print("")
+    else:
+        print("")
+        summary(model, input_data=(dummy_sample, dummy_timestep))
+        print("")
+        
     if (config['mode'] == "train" and config['resume_epoch'] is not None) or "eval" in config['mode']:
         if config['mode'] == "train":
             print("resuming from model at training epoch {}".format(config['resume_epoch']))
@@ -257,7 +287,10 @@ def main(
     if config['model_type'] == "DDPM":
         noise_scheduler = diffusers.DDPMScheduler(num_train_timesteps=1000)
     elif config['model_type'] == "DDIM":
-        noise_scheduler = diffusers.DDIMScheduler(num_train_timesteps=1000)
+        if config['use_squaredcos_cap_v2_scheduler']:
+            noise_scheduler = diffusers.DDIMScheduler(num_train_timesteps=1000, beta_start=0.00005, beta_end=0.01, beta_schedule="squaredcos_cap_v2")
+        else:
+            noise_scheduler = diffusers.DDIMScheduler(num_train_timesteps=1000, beta_start=0.00005, beta_end=0.01, beta_schedule="linear")
 
     if config['mode'] == "train":
         # training setup
@@ -269,12 +302,13 @@ def main(
         )
 
         # Save the images
-        train_save_dir = os.path.join(config['output_dir'], "training")
+        train_save_dir = os.path.join(config['output_dir'], "training", "images_after_transform")
         os.makedirs(train_save_dir, exist_ok=True)
 
         training_example_batch = next(iter(train_dataloader))
         save_nifti(training_example_batch, seg_key, train_save_dir)
         print(f"\n\nBefore training, save success at {train_save_dir}\n\n")
+        
         # train
         train_loop(
             config, 
