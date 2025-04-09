@@ -54,6 +54,12 @@ def main(
     if config['use_ablated_segmentations'] or eval_mask_removal or eval_blank_mask:
         config['output_dir'] += "-ablated"
 
+    if config['class_conditional']:
+        config['output_dir'] += "-classCond"
+    
+    if config['cfg_training']:
+        config['output_dir'] += "-CFG"
+        
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     config['output_dir'] += f"_{timestamp}"
     config['output_dir'] = os.path.join("experiments", config['output_dir'])

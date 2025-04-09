@@ -178,18 +178,13 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval
             if config['neighboring_images_guided']:
                 noisy_images = add_neighboring_images_to_noise(noisy_images, batch, config, device)
 
-            # Predict the noise residual
-            # if config['class_conditional']:
-                # class_labels = torch.ones(noisy_images.size(0)).long().to(device)
-                # classifier-free guidance
-                # a = np.random.uniform()
-                # if a <= config['cfg_p_uncond']:
-                #     class_labels = torch.zeros_like(class_labels).long()
-                # noise_pred = model(noisy_images, timesteps, class_labels=class_labels, return_dict=False)[0]
-
-
             if config['class_conditional']:
                 class_labels = batch['class_label'].long().to(device)
+                # classifier-free guidance
+                if config['cfg_training']:
+                    a = np.random.uniform()
+                    if a <= config['cfg_p_uncond']:
+                        class_labels = torch.zeros_like(class_labels).long()
                 noise_pred = model(noisy_images, timesteps, class_labels=class_labels, return_dict=False)[0]
             else:
                 noise_pred = model(noisy_images, timesteps, return_dict=False)[0]

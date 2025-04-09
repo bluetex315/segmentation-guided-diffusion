@@ -25,7 +25,8 @@ training_args:
   save_image_epochs: 20
   save_model_epochs: 40
   mixed_precision: fp16  # Default remains as 'fp16'
-  class_conditional: false
+  class_conditional: true
+  cfg_training: true
   num_class_embeds: 5
   output_dir: null
   save_forward_process: true
