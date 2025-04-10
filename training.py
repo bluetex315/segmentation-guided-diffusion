@@ -21,52 +21,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 import diffusers
 
-from eval import evaluate, add_segmentations_to_noise, add_neighboring_images_to_noise, SegGuidedDDPMPipeline, SegGuidedDDIMPipeline
+from eval import evaluate, evaluate_fake_PIRADS_images, add_segmentations_to_noise, add_neighboring_images_to_noise, SegGuidedDDPMPipeline, SegGuidedDDIMPipeline
 
-# @dataclass
-# class TrainingConfig:
-#     mode: str = "train"
-#     model_type: str = "DDPM"
-#     image_size: int = 160  # the generated image resolution
-#     train_batch_size: int = 32
-#     eval_batch_size: int = 8  # how many images to sample during evaluation
-#     num_img_channels: int = None
-#     img_dir: str = None
-#     seg_dir: str = None
-#     seg_type: str = None
-#     num_epochs: int = 200
-#     gradient_accumulation_steps: int = 1
-#     learning_rate: float = 1e-4
-#     lr_warmup_steps: int = 500
-#     save_image_epochs: int = 20
-#     save_model_epochs: int = 30
-#     mixed_precision: str = 'fp16'  # `no` for float32, `fp16` for automatic mixed precision
-#     output_dir: str = None
-
-#     push_to_hub: bool = False  # whether to upload the saved model to the HF Hub
-#     hub_private_repo: bool = False
-#     overwrite_output_dir: bool = True  # overwrite the old model when re-running the notebook
-#     seed: int = 0
-
-#     # custom options
-#     segmentation_guided: bool = False
-#     segmentation_channel_mode: str = "single"
-#     num_segmentation_classes: int = None # INCLUDING background
-#     use_ablated_segmentations: bool = False
-#     dataset: str = "breast_mri"
-#     resume_epoch: int = None
-
-#     # EXPERIMENTAL/UNTESTED: classifier-free class guidance and image translation
-#     class_conditional: bool = False
-#     cfg_p_uncond: float = 0.2 # p_uncond in classifier-free guidance paper
-#     cfg_weight: float = 0.3 # w in the paper
-#     trans_noise_level: float = 0.5 # ratio of time step t to noise trans_start_images to total T before denoising in translation. e.g. value of 0.5 means t = 500 for default T = 1000.
-#     use_cfg_for_eval_conditioning: bool = True  # whether to use classifier-free guidance for or just naive class conditioning for main sampling loop
-#     cfg_maskguidance_condmodel_only: bool = True  # if using mask guidance AND cfg, only give mask to conditional network
-#     # ^ this is because giving mask to both uncond and cond model make class guidance not work 
-#     # (see "Classifier-free guidance resolution weighting." in ControlNet paper)
-    
-#     debug_save_image: bool = True
 
 def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval_dataloader, lr_scheduler, device='cuda'):
     # Prepare everything
@@ -272,11 +228,13 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval
         model.eval()
 
         if (epoch + 1) % config['save_image_epochs'] == 0 or epoch == config['num_epochs'] - 1:
-            print("******* saving images *****")
-            print("output dir ", config['output_dir'])
+            # print("output dir ", config['output_dir'])
             if config['segmentation_guided']:
                 for seg_batch in tqdm(eval_dataloader):
-                    evaluate(config, epoch, pipeline, seg_batch)        # evaluate only saves synthetic images
+                    if config['fake_labels']:
+                        evaluate_fake_PIRADS_images(config, epoch, pipeline, seg_batch)
+                    else:
+                        evaluate(config, epoch, pipeline, seg_batch)        # evaluate only saves synthetic images
             else:
                 evaluate(config, epoch, pipeline)
 

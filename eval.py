@@ -409,8 +409,6 @@ def evaluate(config, epoch, pipeline, seg_batch=None, class_label_cfg=None, tran
     # Make a grid out of the images
     cols = 4
     rows = math.ceil(len(images) / cols)
-    # len(images) = eval_batch_size
-    # image_grid = make_grid(images, rows=rows, cols=cols)
 
     # Save the images
     test_dir = os.path.join(config['output_dir'], "samples")
@@ -419,10 +417,7 @@ def evaluate(config, epoch, pipeline, seg_batch=None, class_label_cfg=None, tran
     epoch_test_dir = os.path.join(test_dir, f"{epoch:04d}")
     os.makedirs(epoch_test_dir, exist_ok=True)
     
-    # image_grid.save(f"{test_dir}/{epoch:04d}.png")
-
     # save segmentations we conditioned the samples on segm
-    # currently not support no segm guided
     if config['segmentation_guided']:
 
         print("eval line403 seg_batch keys", seg_batch.keys())
@@ -476,6 +471,83 @@ def evaluate(config, epoch, pipeline, seg_batch=None, class_label_cfg=None, tran
             nifti_syn_img = nib.Nifti1Image(syn_img_np, affine=np.eye(4))
             syn_img_filename = os.path.join(test_dir, f"{epoch:04d}_{i:04d}_syn.nii.gz")
             nib.save(nifti_syn_img, syn_img_filename)
+
+
+def evaluate_fake_PIRADS_images(config, epoch, pipeline, seg_batch=None, translate=False):
+    """
+    Evaluate by generating images conditioned on each of the 5 PI-RADS classes,
+    regardless of the true class labels in the segmentation batch.
+    """
+    
+    # Save the images
+    test_dir = os.path.join(config['output_dir'], "samples")
+    os.makedirs(test_dir, exist_ok=True)
+
+    epoch_test_dir = os.path.join(test_dir, f"{epoch:04d}")
+    os.makedirs(epoch_test_dir, exist_ok=True)
+
+    true_class_labels = seg_batch['class_label']
+
+    # Loop over the 5 classes. Adjust this range according to your label convention.
+    for fake_class_value in range(5):  # Assuming PI-RADS classes are 1,2,3,4,5
+        print(f"<<<<<<<<<<<<<<<<<<< Generating images conditioned on fake class label: {fake_class_value} <<<<<<<<<<<<<<<<<<")
+
+        fake_class_labels = torch.full_like(true_class_labels, fake_class_value)
+        print("eval line496", fake_class_labels)
+        # Call the pipeline with the fake (override) class label.
+        # Your modified __call__ method will detect that fake_class_labels is provided and use it.
+        output = pipeline(
+            batch_size=len(seg_batch['image']),
+            seg_batch=seg_batch,
+            fake_class_labels=fake_class_labels,
+            translate=translate
+        )
+        images = output.images  # List or np.array of generated images
+
+        print("eval line508 seg_batch keys", seg_batch.keys())
+        print("eval line509 seg_batch patient_ids", seg_batch['patient_id'])
+        print("eval line510 seg_batch slice_idx", seg_batch['slice_idx'])
+        print("eval line510 seg_batch true_class", seg_batch['class_label'])
+
+        # save images
+        for i in range(len(images)):        # images: List
+            pid = seg_batch['patient_id'][i]
+            sidx = seg_batch['slice_idx'][i]
+            if config['class_conditional']:
+                true_class_label = true_class_labels[i]
+                true_class_label_str = f"_class{true_class_label}"
+
+                fake_class_label = fake_class_value
+                fake_class_label_str = f"_fakeclass{fake_class_value}"
+            else:
+                true_class_label_str = ""
+                fake_class_label_str = ""
+
+            # Create a folder for the current patient if it doesn't exist
+            patient_dir = os.path.join(epoch_test_dir, f"patient_{pid}")
+            os.makedirs(patient_dir, exist_ok=True)
+            
+            # save synthetic images
+            syn_img_np = images[i, ..., 0]      # np.ndarray
+            nifti_syn_img = nib.Nifti1Image(syn_img_np, affine=np.eye(4))
+            syn_img_filename = os.path.join(patient_dir, f"{epoch:04d}_{pid}_slice{sidx}{fake_class_label_str}_syn.nii.gz")
+            nib.save(nifti_syn_img, syn_img_filename)
+
+            # save original images
+            orig_img_np = seg_batch['image'][i, 0, ...].cpu().numpy()  # Move to CPU if necessary and convert to NumPy
+            nifti_orig_img = nib.Nifti1Image(orig_img_np, affine=np.eye(4))
+            orig_img_filename = os.path.join(patient_dir, f"{epoch:04d}_{pid}_slice{sidx}{true_class_label_str}_orig.nii.gz")
+            nib.save(nifti_orig_img, orig_img_filename)
+
+            # save segmentation mask, support multiple masks
+            for seg_type in seg_batch.keys():
+                if seg_type.startswith("seg_"):
+                    segm_np = seg_batch[seg_type][i, 0, ...].cpu().numpy()  # Move to CPU if necessary and convert to NumPy
+                    nifti_segm = nib.Nifti1Image(segm_np, affine=np.eye(4))
+                    segm_filename = os.path.join(patient_dir, f"{epoch:04d}_{pid}_slice{sidx}{true_class_label_str}_cond_segm_{seg_type}.nii.gz")
+                    nib.save(nifti_segm, segm_filename)
+                
+        print("<<<<<<<<<<<<<<<<<<< saved fake images at inference >>>>>>>>>>>>>>>>>>>>>>>>>>>>\n\n\n")
 
 class ConfigWrapper:
     def __init__(self, config):
@@ -737,7 +809,8 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
         output_type: Optional[str] = "np.array",
         return_dict: bool = True,
         seg_batch: Optional[torch.Tensor] = None,
-        class_label_cfg: Optional[int] = None,
+        # class_label_cfg: Optional[int] = None,
+        fake_class_labels: Optional[torch.Tensor] = None,
         translate = False,
     ) -> Union[ImagePipelineOutput, Tuple]:
         r"""
@@ -876,30 +949,30 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
                 image = add_neighboring_images_to_noise(image, seg_batch, self.external_config.config, self.device)
                 
             if self.external_config.config['class_conditional']:
-                if class_label_cfg is not None:
-                    class_labels = torch.full([image.size(0)], class_label_cfg).long().to(self.device)
-                    model_output_cond = self.unet(image, t, class_labels=class_labels).sample
-                    if self.external_config.config['use_cfg_for_eval_conditioning']:
-                        # use classifier-free guidance for sampling from the given class
-                        if self.external_config.config['cfg_maskguidance_condmodel_only']:
-                            image_emptymask = torch.cat((image[:, :img_channel_ct, :, :], torch.zeros_like(image[:, img_channel_ct:, :, :])), dim=1)
-                            model_output_uncond = self.unet(image_emptymask, t, 
-                                    class_labels=torch.zeros_like(class_labels).long()).sample
-                        else:
-                            model_output_uncond = self.unet(image, t, 
-                                    class_labels=torch.zeros_like(class_labels).long()).sample
+                true_class_labels = seg_batch['class_label'].long().to(self.device)
+                
+                # use cfg for eval
+                if self.external_config.config['cfg_eval']:
 
-                        # use cfg equation
-                        model_output = (1. + self.external_config.config['cfg_weight']) * model_output_cond - self.external_config.config['cfg_weight'] * model_output_uncond
-                    else:
-                        model_output = model_output_cond
-               
+                    # use fake_class_labels for synthesis
+                    if fake_class_labels is not None:       
+                        fake_class_labels = fake_class_labels.long().to(self.device)
+                        model_output_cond = self.unet(image, t, class_labels=fake_class_labels).sample
+                        model_output_uncond = self.unet(image, t, class_labels=torch.zeros_like(fake_class_labels).long()).sample
+                    
+                    # use true_class_labels for cfg
+                    else:       
+                        model_output_cond = self.unet(image, t, class_labels=true_class_labels).sample
+                        model_output_uncond = self.unet(image, t, class_labels=torch.zeros_like(true_class_labels).long()).sample
+
+                    model_output = (1. + self.external_config.config['cfg_weight']) * model_output_cond - self.external_config.config['cfg_weight'] * model_output_uncond
+                
                 else:
-                    # if training conditionally, evaluate source domain samples
-                    # class_labels = torch.ones(image.size(0)).long().to(self.device)
-                    class_labels = seg_batch['class_label'].long().to(self.device)
-                    model_output = self.unet(image, t, class_labels=class_labels).sample
+                    # no cfg for eval
+                    # TODO: complete no use cfg and synthesize using fake labels
+                    model_output = self.unet(image, t, class_labels=true_class_labels).sample
             else:
+                # no class guided
                 model_output = self.unet(image, t).sample
 
             # 2. predict previous mean of image x_t-1 and add variance depending on eta

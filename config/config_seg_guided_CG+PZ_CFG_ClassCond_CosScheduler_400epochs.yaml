@@ -16,13 +16,13 @@ data_args:
   num_segmentation_classes: 3
 
 training_args:
-  train_batch_size: 16  # Updated to match input
-  eval_batch_size: 16  # Updated to match input
+  train_batch_size: 32  # Updated to match input
+  eval_batch_size: 32  # Updated to match input
   num_epochs: 400
   gradient_accumulation_steps: 1
   learning_rate: 0.00001
   lr_warmup_steps: 500
-  save_image_epochs: 20
+  save_image_epochs: 40
   save_model_epochs: 40
   mixed_precision: fp16  # Default remains as 'fp16'
   class_conditional: true
@@ -38,7 +38,9 @@ training_args:
   
 
 test_args:
-  eval_batch_size: 4
+  cfg_eval: true
+  fake_labels: true
+  eval_batch_size: 16
   eval_mask_removal: false
   eval_blank_mask: false
   eval_sample_size: 1000
