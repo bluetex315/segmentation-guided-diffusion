@@ -16,7 +16,7 @@ import datasets
 
 # custom imports
 from training import train_loop
-from eval import evaluate_generation, evaluate_sample_many
+from eval import evaluate_generation, evaluate_sample_many, evaluate_fake_PIRADS_images, evaluate, SegGuidedDDIMPipeline
 from utils import make_grid, save_nifti, load_config, flatten_config, parse_3d_volumes, train_test_split_dset
 
 import yaml
@@ -26,6 +26,7 @@ from sklearn.model_selection import train_test_split
 import monai
 from monai.transforms import Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, NormalizeIntensityd, ToTensord, Orientationd, CenterSpatialCropd, Orientationd, ScaleIntensityRangePercentilesd
 from datetime import datetime
+from tqdm.auto import tqdm
 
 
 def main(
@@ -37,8 +38,8 @@ def main(
     eval_blank_mask=False,
     eval_sample_size=1000
 ):
-    
-    print("TRAINING SETTINGS:")
+    print("")
+    print("SETTINGS:")
     print(config)
     #GPUs
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -59,6 +60,9 @@ def main(
     
     if config['cfg_training']:
         config['output_dir'] += "-CFG"
+    
+    if config['mode'] == 'eval':
+        config['output_dir'] += "-eval"
         
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     config['output_dir'] += f"_{timestamp}"
@@ -196,7 +200,7 @@ def main(
     train_dataset = monai.data.Dataset(slices_dset_list_train, transform=train_transforms)
     val_dataset = monai.data.Dataset(slices_dset_list_val, transform=eval_transforms)
     test_dataset = monai.data.Dataset(slices_dset_list_test, transform=eval_transforms)
-    
+
     print(f"Length of train_dataset is {len(train_dataset)}")
     print(f"Length of val_dataset is {len(val_dataset)}")
     print(f"Length of test_dataset is {len(test_dataset)}")
@@ -213,12 +217,26 @@ def main(
         shuffle=False
     )
 
-    if config['mode'] == 'test':
-        eval_dataloader = torch.utils.data.DataLoader(
-            test_dataset, 
-            batch_size=config['eval_batch_size'],
-            shuffle=False
-        )
+    if config['mode'] == 'eval':
+
+        if config['use_alldset_for_eval']:
+            slices_dset_list_all = slices_dset_list_train + slices_dset_list_val + slices_dset_list_test
+            all_dataset_for_eval = monai.data.Dataset(slices_dset_list_all, transform=eval_transforms)
+
+            print(f"Length of test_dataset is {len(all_dataset_for_eval)}")
+        
+            eval_dataloader = torch.utils.data.DataLoader(
+                all_dataset_for_eval, 
+                batch_size=config['eval_batch_size'],
+                shuffle=False
+            )
+        
+        else:
+            eval_dataloader = torch.utils.data.DataLoader(
+                test_dataset, 
+                batch_size=config['eval_batch_size'],
+                shuffle=False
+            )
 
     # define the model
     in_channels = config['num_img_channels']
@@ -284,7 +302,7 @@ def main(
             print("resuming from model at training epoch {}".format(config['resume_epoch']))
         elif "eval" in config['mode']:
             print("loading saved model...")
-        model = model.from_pretrained(os.path.join(config['training_args']['output_dir'], 'unet'), use_safetensors=True)
+        model = model.from_pretrained(config['checkpoint'], use_safetensors=True)
 
     model = nn.DataParallel(model)
     model.to(device)
@@ -327,7 +345,7 @@ def main(
             device=device
         )
             
-    elif mode == "eval":
+    elif config['mode'] == "eval":
         """
         default eval behavior:
         evaluate image generation or translation (if for conditional model, either evaluate naive class conditioning but not CFG,
@@ -336,17 +354,26 @@ def main(
 
         has various options.
         """
-        evaluate_generation(
-            config, 
-            model, 
-            noise_scheduler,
-            eval_dataloader, 
-            eval_mask_removal=eval_mask_removal,
-            eval_blank_mask=eval_blank_mask,
-            device=device
-        )
+        if config['model_type']== "DDIM":
+            if config['segmentation_guided']:
+                pipeline = SegGuidedDDIMPipeline(
+                    unet=model.module, scheduler=noise_scheduler, eval_dataloader=eval_dataloader, external_config=config
+                    )
+            else:
+                pipeline = diffusers.DDIMPipeline(unet=model.module, scheduler=noise_scheduler)
+        else:
+            raise NotImplementedError("TODO: implement eval for DDPM")
 
-    elif mode == "eval_many":
+        epoch = config['num_epochs'] - 1
+        if config['segmentation_guided']:
+            for seg_batch in tqdm(eval_dataloader):
+                if config['fake_labels']:
+                    evaluate_fake_PIRADS_images(config, epoch, pipeline, seg_batch)
+                else:
+                    evaluate(config, epoch, pipeline, seg_batch)        # evaluate only saves synthetic images
+
+
+    elif config['mode'] == "eval_many":
         """
         generate many images and save them to a directory, saved individually
         """
@@ -367,39 +394,17 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_file", type=str, required=True, help="Path to the config file")
+    parser.add_argument("--mode", type=str, default="train", help="train or eval")
+    parser.add_argument("--checkpoint", type=str, default="", help='checkpoint to torch safetensor')
+    parser.add_argument("--use_alldset_for_eval", action='store_true')
     args = parser.parse_args()
-
 
     # Load and flatten the configuration.
     nested_config = load_config(args.config_file)
     flat_config = flatten_config(nested_config)
 
-    print("Flattened configuration:")
-    print(flat_config)
-    print("")
-
-    # Construct the TrainingConfig object
-    # config = TrainingConfig(
-    #     mode=yaml_config['model_args']['mode'],
-    #     img_size=yaml_config['data_args']['img_size'],
-    #     dataset=yaml_config['data_args']['dataset'],
-    #     num_img_channels=yaml_config['data_args']['num_img_channels'],
-    #     img_dir=yaml_config['data_args']['img_dir'],
-    #     seg_dir=yaml_config['data_args']['seg_dir'],
-    #     learning_rate=yaml_config['training_args']['learning_rate'],
-    #     save_image_epochs=yaml_config['training_args']['save_image_epochs'],
-    #     save_model_epochs=yaml_config['training_args']['save_model_epochs'],
-    #     segmentation_guided=yaml_config['data_args']['segmentation_guided'],
-    #     segmentation_channel_mode=yaml_config['data_args']['segmentation_channel_mode'],
-    #     num_segmentation_classes=yaml_config['data_args']['num_segmentation_classes'],
-    #     train_batch_size=yaml_config['training_args']['train_batch_size'],  # Assuming train_batch_size is in data_args
-    #     eval_batch_size=yaml_config['training_args']['eval_batch_size'],    # Assuming eval_batch_size is in data_args
-    #     num_epochs=yaml_config['training_args']['num_epochs'],  # Accessing directly from yaml_config
-    #     output_dir=yaml_config['training_args']['output_dir'],  # Accessing directly
-    #     model_type=yaml_config['model_args']['model_type'],
-    #     resume_epoch=yaml_config['model_args']['resume_epoch'],
-    #     use_ablated_segmentations=yaml_config['training_args']['use_ablated_segmentations']
-    # )
+    cmd_args = vars(args)
+    flat_config.update(cmd_args)
 
     main(flat_config)
 
