@@ -7,7 +7,7 @@ data_args:
   img_size: 128
   num_img_channels: 1
   dataset: fastMRI_NYU
-  label_csv_dir: "/home/lc2382/project/segmentation-guided-diffusion/data/labels/t2_slice_level_labels.csv"
+  label_csv_dir: "/home/lc2382/project/segmentation-guided-diffusion/data/labels/t2_slice_level_labels_reversed.csv"
   img_dir: "/home/lc2382/project/fastMRI_NYU/nifti"
   seg_dir: "/home/lc2382/project/segmentation-guided-diffusion/data/CG+PZ_seg"
   segmentation_guided: true
@@ -34,7 +34,7 @@ training_args:
 
   use_ablated_segmentations: false
   eval_noshuffle_dataloader: false
-  seed: 0
+  seed: 10383
   
 
 test_args:

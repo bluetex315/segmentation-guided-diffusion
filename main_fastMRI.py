@@ -17,7 +17,7 @@ import datasets
 # custom imports
 from training import train_loop
 from eval import evaluate_generation, evaluate_sample_many, evaluate_fake_PIRADS_images, evaluate, SegGuidedDDIMPipeline
-from utils import make_grid, save_nifti, load_config, flatten_config, parse_3d_volumes, train_test_split_dset
+from utils import make_grid, save_nifti, load_config, flatten_config, parse_3d_volumes, split_dset_by_patient, get_patient_splits
 
 import yaml
 import pickle
@@ -82,6 +82,26 @@ def main(
         load_images_as_np_arrays = True
         print("image channels not 1 or 3, attempting to load images as np arrays...")
 
+    exclude = ["223"]   # As patient_223 does not have correspoding segmentation, so remove it
+    train_ids, val_ids, test_ids = get_patient_splits(
+        datapath=config['img_dir'],
+        test_size=0.3,
+        val_size=0.5,
+        seed=config.get('seed', 42),
+        exclude_ids=exclude
+    )
+
+    print(f"[main] splits seed{config.get('seed', 42)}")
+    print("[main] train ids\n", train_ids)
+    print("[main] val ids\n", val_ids)
+    print("[main] test ids\n", test_ids)
+    print()
+    print(f"Train: {len(train_ids)} patients")
+    print(f"val:   {len(val_ids)} patients")
+    print(f"test:  {len(test_ids)} patients")
+    print()
+
+    # load data
     dset_dict = {}
     if config['img_dir'] is not None:
         img_paths = [
@@ -101,27 +121,26 @@ def main(
             ]
             for seg_type in seg_types
         }
-        # print(seg_paths)
         for seg_type in seg_types:
-            print("CONDITIONED ON", seg_type)
-        seg_key = 'seg_' + seg_type
-        dset_dict.update({seg_key: seg_paths[seg_type] for seg_type in seg_types})
-
-        # if "image" not in dset_dict:
-        #     dset_dict["patient_id"] = [os.path.basename(f).split("_")[0] for f in seg_paths[seg_types[0]]]
-
-    print(dset_dict.keys())
-    # print(dset_dict['seg_gland_mask'])
+            print("[main] CONDITIONED ON", seg_type)
+            seg_key = 'seg_' + seg_type
+            dset_dict.update({seg_key: seg_paths[seg_type]})
+    
+    print(f"[main] {dset_dict.keys()}")
     
     # train_test_split on patient level
-    dset_dict_train, dset_dict_eval = train_test_split_dset(dset_dict, test_size=0.2)
-    dset_dict_val, dset_dict_test = train_test_split_dset(dset_dict_eval, test_size=0.5)
+    # dset_dict_train, dset_dict_eval = train_test_split_dset(dset_dict, test_size=0.3, random_state=42)
+    # dset_dict_val, dset_dict_test = train_test_split_dset(dset_dict_eval, test_size=0.5, random_state=42)
 
-    slices_dset_list_train = parse_3d_volumes(dset_dict_train, seg_type, csv_file=config['label_csv_dir'])
-    slices_dset_list_val = parse_3d_volumes(dset_dict_val, seg_type, csv_file=config['label_csv_dir'])
-    slices_dset_list_test = parse_3d_volumes(dset_dict_test, seg_type, csv_file=config['label_csv_dir'])
+    dset_dict_train = split_dset_by_patient(dset_dict, train_ids)
+    dset_dict_val = split_dset_by_patient(dset_dict, val_ids)
+    dset_dict_test = split_dset_by_patient(dset_dict, test_ids)
+
+    slices_dset_list_train = parse_3d_volumes(dset_dict_train, seg_type, label_csv_file=config['label_csv_dir'])
+    slices_dset_list_val = parse_3d_volumes(dset_dict_val, seg_type, label_csv_file=config['label_csv_dir'])
+    slices_dset_list_test = parse_3d_volumes(dset_dict_test, seg_type, label_csv_file=config['label_csv_dir'])
     
-    print("main line113", slices_dset_list_train[0].keys())
+    print("[main] slices_dset keys", slices_dset_list_train[0].keys())
     
     norm_key, tot_key = [], []
     if config['img_dir'] is not None:

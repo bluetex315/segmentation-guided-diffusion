@@ -28,10 +28,10 @@ def flatten_config(config):
     return flat_config
 
 
-def parse_3d_volumes(dset_dict, seg_type, csv_file=None):
+def parse_3d_volumes(dset_dict, seg_type, label_csv_file=None):
 
-    if csv_file is not None:
-        labels_df = pd.read_csv(csv_file)
+    if label_csv_file is not None:
+        labels_df = pd.read_csv(label_csv_file)
         # Expecting columns: 'patient_id', 'slice_idx', 'class_label'
         labels_dict = {}
         for _, row in labels_df.iterrows():
@@ -73,7 +73,7 @@ def parse_3d_volumes(dset_dict, seg_type, csv_file=None):
         # Check that both image and segmentation exist for this patient.
 
         seg_key = 'seg_'+seg_type
-        # Load the 3D volumes.
+        # Load the 3D volumes using nibabel.
         img_vol = nib.load(files['image']).get_fdata()
         seg_vol = nib.load(files[seg_key]).get_fdata()
     
@@ -132,31 +132,70 @@ def parse_3d_volumes(dset_dict, seg_type, csv_file=None):
             else:
                 print("None", key)
                 slice_info['class_label'] = None  # or you might choose to skip the slice if no label exists.
-            # print(slice_info)
+
             selected_slices.append(slice_info)
     
     return selected_slices
 
+def get_patient_splits(datapath, test_size, val_size, seed, exclude_ids=None):
+    # 1) list all patient‐folder names
+    all_ids = sorted(
+        d for d in os.listdir(datapath)
+        if os.path.isdir(os.path.join(datapath, d))
+    )
+    # 2) remove any you don’t want
+    if exclude_ids is not None:
+        all_ids = [pid for pid in all_ids if pid not in set(exclude_ids)]
 
-# Split the dataset dictionary into train and test splits
-def train_test_split_dset(dset_dict, test_size=0.2, random_state=42):
-    # Create indices for splitting
-    if '/home/lc2382/project/fastMRI_NYU/nifti/223/223_T2W.nii.gz' in dset_dict['image']:
-        dset_dict['image'].remove('/home/lc2382/project/fastMRI_NYU/nifti/223/223_T2W.nii.gz')
-        print(f'Removing problematic image')
-    num_samples = len(dset_dict[list(dset_dict.keys())[0]])
-    indices = list(range(num_samples))
-    
-    # Perform the split
-    train_indices, test_indices = train_test_split(indices, test_size=test_size, random_state=random_state)
+    # 3) do the train/val/test splits
+    train_ids, temp_ids = train_test_split(
+        all_ids, test_size=test_size, random_state=seed
+    )
+    val_ids, test_ids = train_test_split(
+        temp_ids, test_size=val_size, random_state=seed
+    )
+    return train_ids, val_ids, test_ids
 
-    # Create train and test dictionaries by indexing into dset_dict
-    train_dict = {key: [dset_dict[key][i] for i in train_indices] for key in dset_dict}
-    test_dict = {key: [dset_dict[key][i] for i in test_indices] for key in dset_dict}
 
-    # print(train_dict)
+def split_dset_by_patient(dset_dict, split_ids):
 
-    return train_dict, test_dict
+    out = {}
+    for modality, paths in dset_dict.items():
+        # 1) Sort the file‑paths for reproducibility
+        sorted_paths = sorted(paths)
+
+        # 2) Filter: only keep files whose patient‑ID is in split_ids
+        kept_paths = []
+        for path in sorted_paths:
+            filename = os.path.basename(path)          # e.g. "152_T2W.nii.gz"
+            patient_id = filename.split("_", 1)[0]     # split on first underscore
+
+            if patient_id in split_ids:
+                kept_paths.append(path)
+
+        # 3) Assign the filtered list back into the new dict
+        out[modality] = kept_paths
+
+    return out
+
+
+# # Split the dataset dictionary into train and test splits
+# def train_test_split_dset(dset_dict, test_size=0.3, random_state=42):
+#     # Create indices for splitting
+#     if '/home/lc2382/project/fastMRI_NYU/nifti/223/223_T2W.nii.gz' in dset_dict['image']:
+#         dset_dict['image'].remove('/home/lc2382/project/fastMRI_NYU/nifti/223/223_T2W.nii.gz')
+#         print(f'Removing problematic image')
+#     num_samples = len(dset_dict[list(dset_dict.keys())[0]])
+#     indices = list(range(num_samples))
+
+#     # Perform the split
+#     train_indices, test_indices = train_test_split(indices, test_size=test_size, random_state=random_state)
+
+#     # Create train and test dictionaries by indexing into dset_dict
+#     train_dict = {key: [dset_dict[key][i] for i in train_indices] for key in dset_dict}
+#     test_dict = {key: [dset_dict[key][i] for i in test_indices] for key in dset_dict}
+
+#     return train_dict, test_dict
 
 
 def make_grid(images, rows, cols):
