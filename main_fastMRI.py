@@ -237,9 +237,9 @@ def main(
     )
 
     if config['mode'] == 'eval':
-
-        if config['use_alldset_for_eval']:
-            slices_dset_list_all = slices_dset_list_train + slices_dset_list_val + slices_dset_list_test
+        print("[main] ***************************** Evaluating ********************************")
+        if config['syn_dset_train_for_cls']:
+            slices_dset_list_all = slices_dset_list_train
             all_dataset_for_eval = monai.data.Dataset(slices_dset_list_all, transform=eval_transforms)
 
             print(f"Length of test_dataset is {len(all_dataset_for_eval)}")
@@ -415,7 +415,7 @@ if __name__ == "__main__":
     parser.add_argument("--config_file", type=str, required=True, help="Path to the config file")
     parser.add_argument("--mode", type=str, default="train", help="train or eval")
     parser.add_argument("--checkpoint", type=str, default="", help='checkpoint to torch safetensor')
-    parser.add_argument("--use_alldset_for_eval", action='store_true')
+    parser.add_argument("--syn_dset_train_for_cls", action='store_true')
     args = parser.parse_args()
 
     # Load and flatten the configuration.
