@@ -146,7 +146,7 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval
                 noise_pred = model(noisy_images, timesteps, return_dict=False)[0]
 
             loss = F.mse_loss(noise_pred, noise)
-            print("training 131 loss", loss)
+            # print("training 131 loss", loss)
             loss.backward()
 
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)

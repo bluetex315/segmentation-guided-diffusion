@@ -130,8 +130,8 @@ def parse_3d_volumes(dset_dict, seg_type, label_csv_file=None):
             if key in labels_dict:
                 slice_info['class_label'] = labels_dict[key]
             else:
-                print("None", key)
-                slice_info['class_label'] = None  # or you might choose to skip the slice if no label exists.
+                raise AssertionError (f"the key {key} does not have a corresponding label, problematic") 
+                # slice_info['class_label'] = None  # or you might choose to skip the slice if no label exists.
 
             selected_slices.append(slice_info)
     
