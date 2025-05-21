@@ -61,7 +61,7 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval
                     subset_images = clean_images[:4]        # take the first four images
                     patient_id = batch['patient_id'][:4]
                     slice_idx = batch['slice_idx'][:4]
-                    print("Training line 106", patient_id, slice_idx)
+                    print("[Train --> save_forward_process]", patient_id, slice_idx)
 
                     time_steps = [0, 200, 400, 600, 800, 999]
 
@@ -123,7 +123,7 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval
                                     
             # Sample a random timestep for each image
             timesteps = torch.randint(0, noise_scheduler.config['num_train_timesteps'], (bs,), device=clean_images.device).long()
-            print("training 103 timesteps", timesteps)
+            # print("training 103 timesteps", timesteps)
             # Add noise to the clean images according to the noise magnitude at each timestep
             # (this is the forward diffusion process)
             noisy_images = noise_scheduler.add_noise(clean_images, noise, timesteps)
@@ -225,18 +225,18 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval
                 else:
                     pipeline = diffusers.DDIMPipeline(unet=model.module, scheduler=noise_scheduler)
 
-        model.eval()
+        # model.eval()
 
-        if (epoch + 1) % config['save_image_epochs'] == 0 or epoch == config['num_epochs'] - 1:
-            # print("output dir ", config['output_dir'])
-            if config['segmentation_guided']:
-                for seg_batch in tqdm(eval_dataloader):
-                    if config['fake_labels']:
-                        evaluate_fake_PIRADS_images(config, epoch, pipeline, seg_batch)
-                    else:
-                        evaluate(config, epoch, pipeline, seg_batch)        # evaluate only saves synthetic images
-            else:
-                evaluate(config, epoch, pipeline)
+        # if (epoch + 1) % config['save_image_epochs'] == 0 or epoch == config['num_epochs'] - 1:
+        #     # print("output dir ", config['output_dir'])
+        #     if config['segmentation_guided']:
+        #         for seg_batch in tqdm(eval_dataloader):
+        #             if config['fake_labels']:
+        #                 evaluate_fake_PIRADS_images(config, epoch, pipeline, seg_batch)
+        #             else:
+        #                 evaluate(config, epoch, pipeline, seg_batch)        # evaluate only saves synthetic images
+        #     else:
+        #         evaluate(config, epoch, pipeline)
 
         if (epoch + 1) % config['save_model_epochs'] == 0 or epoch == config['num_epochs'] - 1:
             pipeline.save_pretrained(config['output_dir'])

@@ -1,8 +1,11 @@
 from PIL import Image
 import os
+import re
 import nibabel as nib
 import numpy as np
 import pandas as pd
+import torch
+from torch.utils.data import Dataset, DataLoader
 import yaml
 from sklearn.model_selection import train_test_split
 
@@ -94,7 +97,7 @@ def parse_3d_volumes(dset_dict, seg_type, label_csv_file=None):
         # Determine the selection range.
         # For example, if the active segmentation is between slice 8 and 22, then include from
         # max(0, 8-neighbor_range) to min(num_slices-1, 22+neighbor_range)
-        neighbor_range = 3
+        neighbor_range = 0
         min_valid = min(valid_indices)
         max_valid = max(valid_indices)
         start_idx = max(0, min_valid - neighbor_range)
@@ -177,25 +180,6 @@ def split_dset_by_patient(dset_dict, split_ids):
         out[modality] = kept_paths
 
     return out
-
-
-# # Split the dataset dictionary into train and test splits
-# def train_test_split_dset(dset_dict, test_size=0.3, random_state=42):
-#     # Create indices for splitting
-#     if '/home/lc2382/project/fastMRI_NYU/nifti/223/223_T2W.nii.gz' in dset_dict['image']:
-#         dset_dict['image'].remove('/home/lc2382/project/fastMRI_NYU/nifti/223/223_T2W.nii.gz')
-#         print(f'Removing problematic image')
-#     num_samples = len(dset_dict[list(dset_dict.keys())[0]])
-#     indices = list(range(num_samples))
-
-#     # Perform the split
-#     train_indices, test_indices = train_test_split(indices, test_size=test_size, random_state=random_state)
-
-#     # Create train and test dictionaries by indexing into dset_dict
-#     train_dict = {key: [dset_dict[key][i] for i in train_indices] for key in dset_dict}
-#     test_dict = {key: [dset_dict[key][i] for i in test_indices] for key in dset_dict}
-
-#     return train_dict, test_dict
 
 
 def make_grid(images, rows, cols):

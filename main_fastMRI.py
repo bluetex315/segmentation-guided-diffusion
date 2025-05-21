@@ -127,10 +127,6 @@ def main(
             dset_dict.update({seg_key: seg_paths[seg_type]})
     
     print(f"[main] {dset_dict.keys()}")
-    
-    # train_test_split on patient level
-    # dset_dict_train, dset_dict_eval = train_test_split_dset(dset_dict, test_size=0.3, random_state=42)
-    # dset_dict_val, dset_dict_test = train_test_split_dset(dset_dict_eval, test_size=0.5, random_state=42)
 
     dset_dict_train = split_dset_by_patient(dset_dict, train_ids)
     dset_dict_val = split_dset_by_patient(dset_dict, val_ids)
@@ -373,6 +369,7 @@ def main(
 
         has various options.
         """
+        model.eval()
         if config['model_type']== "DDIM":
             if config['segmentation_guided']:
                 pipeline = SegGuidedDDIMPipeline(
@@ -396,6 +393,7 @@ def main(
         """
         generate many images and save them to a directory, saved individually
         """
+        model.eval()
         evaluate_sample_many(
             eval_sample_size,
             config,
