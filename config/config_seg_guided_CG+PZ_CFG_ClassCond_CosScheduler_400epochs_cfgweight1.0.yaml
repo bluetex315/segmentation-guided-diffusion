@@ -18,12 +18,12 @@ data_args:
 training_args:
   train_batch_size: 32  # Updated to match input
   eval_batch_size: 32  # Updated to match input
-  num_epochs: 1
+  num_epochs: 400
   gradient_accumulation_steps: 1
   learning_rate: 0.00001
   lr_warmup_steps: 500
-  save_image_epochs: 40
-  save_model_epochs: 40
+  save_image_epochs: 80
+  save_model_epochs: 80
   mixed_precision: fp16  # Default remains as 'fp16'
   class_conditional: true
   cfg_training: true

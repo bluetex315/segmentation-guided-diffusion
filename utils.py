@@ -97,7 +97,7 @@ def parse_3d_volumes(dset_dict, seg_type, label_csv_file=None):
         # Determine the selection range.
         # For example, if the active segmentation is between slice 8 and 22, then include from
         # max(0, 8-neighbor_range) to min(num_slices-1, 22+neighbor_range)
-        neighbor_range = 0
+        neighbor_range = 3
         min_valid = min(valid_indices)
         max_valid = max(valid_indices)
         start_idx = max(0, min_valid - neighbor_range)
