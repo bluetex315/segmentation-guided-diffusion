@@ -225,18 +225,18 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval
                 else:
                     pipeline = diffusers.DDIMPipeline(unet=model.module, scheduler=noise_scheduler)
 
-        # model.eval()
+        model.eval()
 
-        # if (epoch + 1) % config['save_image_epochs'] == 0 or epoch == config['num_epochs'] - 1:
-        #     # print("output dir ", config['output_dir'])
-        #     if config['segmentation_guided']:
-        #         for seg_batch in tqdm(eval_dataloader):
-        #             if config['fake_labels']:
-        #                 evaluate_fake_PIRADS_images(config, epoch, pipeline, seg_batch)
-        #             else:
-        #                 evaluate(config, epoch, pipeline, seg_batch)        # evaluate only saves synthetic images
-        #     else:
-        #         evaluate(config, epoch, pipeline)
+        if (epoch + 1) % config['save_image_epochs'] == 0 or epoch == config['num_epochs'] - 1:
+            # print("output dir ", config['output_dir'])
+            if config['segmentation_guided']:
+                for seg_batch in tqdm(eval_dataloader):
+                    if config['fake_labels']:
+                        evaluate_fake_PIRADS_images(config, epoch, pipeline, seg_batch)
+                    else:
+                        evaluate(config, epoch, pipeline, seg_batch)        # evaluate only saves synthetic images
+            else:
+                evaluate(config, epoch, pipeline)
 
         if (epoch + 1) % config['save_model_epochs'] == 0 or epoch == config['num_epochs'] - 1:
             pipeline.save_pretrained(config['output_dir'])
