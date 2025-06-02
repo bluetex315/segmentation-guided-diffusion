@@ -486,6 +486,7 @@ def evaluate_fake_PIRADS_images(config, epoch, pipeline, seg_batch=None, transla
     epoch_test_dir = os.path.join(test_dir, f"{epoch:04d}")
     os.makedirs(epoch_test_dir, exist_ok=True)
 
+    print("[eval] output_dir: ", epoch_test_dir)
     true_class_labels = seg_batch['class_label']
 
     # Loop over the 5 classes. Adjust this range according to your label convention.
