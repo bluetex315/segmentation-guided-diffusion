@@ -8,6 +8,13 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import yaml
 from sklearn.model_selection import train_test_split
+import monai
+from monai.transforms import (
+    LoadImaged,
+    Orientationd,
+    ResampleToMatchD,
+    EnsureChannelFirstd,
+)
 
 def load_config(config_file):
     """Load a YAML configuration file and return a nested dictionary."""
@@ -31,7 +38,7 @@ def flatten_config(config):
     return flat_config
 
 
-def parse_3d_volumes(dset_dict, seg_type, label_csv_file=None):
+def parse_3d_volumes(config, dset_dict, seg_type, label_csv_file=None):
 
     if label_csv_file is not None:
         labels_df = pd.read_csv(label_csv_file)
@@ -46,50 +53,109 @@ def parse_3d_volumes(dset_dict, seg_type, label_csv_file=None):
     
     patient_dict = {}
     
+    if config['adc_guided']:
+        image_keys = ['image', 'adc']
+    else:
+        image_keys = ['image']
+    seg_key = 'seg_'+seg_type
+
     # Process the original image paths.
-    image_key = 'image'
-    if image_key in dset_dict:
-        for img_path in dset_dict[image_key]:
-            # Extract the patient ID.
-            basename = os.path.basename(img_path)  # e.g., "110_T2W.nii.gz"
-            patient_id = basename.split('_')[0]    # e.g., "110"
-            # Create an entry for the patient if not already present.
-            if patient_id not in patient_dict:
-                patient_dict[patient_id] = {}
-            patient_dict[patient_id][image_key] = img_path
-            
+    for image_key in image_keys:
+        print(f" -> iterating over key = {image_key}, count = {len(dset_dict.get(image_key, []))}")
+        if image_key in dset_dict:
+            for img_path in dset_dict[image_key]:
+                # Extract the patient ID.
+                basename = os.path.basename(img_path)  # e.g., "110_T2W.nii.gz"
+                patient_id = basename.split('_')[0]    # e.g., "110"
+                # Create an entry for the patient if not already present.
+                if patient_id not in patient_dict:
+                    patient_dict[patient_id] = {}
+                patient_dict[patient_id][image_key] = img_path
+    
     # Process segmentation paths (any key that is not "image").
     for key in dset_dict:
         if key == image_key:
             continue
-        for seg_path in dset_dict[key]:
-            # Extract the patient ID.
-            basename = os.path.basename(seg_path)  # e.g., "110_T2W_infer_seg.nii.gz"
-            patient_id = basename.split('_')[0]     # e.g., "110"
-            if patient_id not in patient_dict:
-                patient_dict[patient_id] = {}
-            patient_dict[patient_id][key] = seg_path
+        if key.startswith("seg"):
+            for seg_path in dset_dict[key]:
+                # Extract the patient ID.
+                basename = os.path.basename(seg_path)  # e.g., "110_T2W_infer_seg.nii.gz"
+                patient_id = basename.split('_')[0]     # e.g., "110"
+                if patient_id not in patient_dict:
+                    patient_dict[patient_id] = {}
+                patient_dict[patient_id][key] = seg_path
+    
+
+    # At this point, patient_dict looks like:
+    # {
+    #   "001": {"image": ".../001_T2W.nii.gz",
+    #           "adc":   ".../001_ADC.nii.gz",
+    #           "seg_CG+PZ_lambd0.4": ".../001_T2W_infer_seg.nii.gz" },
+    #   "004": { … },
+    #   …
+    # }
+
+    # Convert patient_dict → a list of dicts, each containing patient_id + all keys
+    patient_list = []
+    for pid, inner in patient_dict.items():
+        entry = {"patient_id": pid}
+        entry.update(inner)   # merges keys "image", "adc", "seg_CG+PZ_lambd0.4", etc.
+        patient_list.append(entry)
+
+    # At this point, patient_list looks like:
+    # [
+    #   {"patient_id": '001': {"image": ".../001_T2W.nii.gz",
+    #            "adc":   ".../001_ADC.nii.gz",
+    #            "seg_CG+PZ_lambd0.4": ".../001_T2W_infer_seg.nii.gz"},
+    #   {"patient_id": '004': { … },
+    #   …
+    # ]
+    
+    load_keys: KeysCollection = ["image", seg_key]
+    if config.get("adc_guided"):
+        load_keys += ["adc"]
+    
+    load_transforms = [
+        LoadImaged(keys=load_keys),
+        EnsureChannelFirstd(keys=load_keys),
+        Orientationd(keys=load_keys, axcodes="LAS"),
+    ]
+
+    # If adc_guided, append a ResampleToMatchD that takes 'adc' → match 'image'
+    if config.get("adc_guided"):
+        load_transforms.append(
+            ResampleToMatchD(
+                keys="adc",           # what to resample
+                key_dst="image",     # match to this key’s geometry
+                mode="bilinear",        # interpolation for ADC
+                padding_mode="border",  # how to pad if out‐of‐bounds
+            )
+        )
+    
+    loader = monai.transforms.Compose(load_transforms)
+
+    # Apply transforms
+    data_list = loader(patient_list)
 
     selected_slices = []
     
-    for patient_id, files in patient_dict.items():
-        # Check that both image and segmentation exist for this patient.
+    for data_dict in data_list:     # one item in data_dict corrspond to one patient (one volume)
 
-        seg_key = 'seg_'+seg_type
-        # Load the 3D volumes using nibabel.
-        img_vol = nib.load(files['image']).get_fdata()
-        seg_vol = nib.load(files[seg_key]).get_fdata()
-    
-        # Optionally check that image and segmentation have the same number of slices.
-        if img_vol.shape[2] != seg_vol.shape[2]:
-            print(f"Warning: patient {patient_id} image and segmentation volumes have different number of slices.")
-            continue
-        
-        num_slices = img_vol.shape[2]
-        
+        # Now data_dict["image"], data_dict[seg_key], and —if guided— data_dict["adc"]
+        # each have shape [C=1, X, Y, Z], and their metadata dict is under data_dict["image_meta_dict"], etc.
+
+        patient_id = data_dict['patient_id']
+        # Extract numpy arrays and remove channel dim:
+        img_vol = data_dict["image"][0].numpy()    # shape: (X, Y, Z)
+        seg_vol = data_dict[seg_key][0].numpy()    # shape: (X, Y, Z)
+        if config.get("adc_guided"):
+            adc_vol = data_dict["adc"][0].numpy()  # now aligned to img_vol’s grid
+        else:
+            adc_vol = None
+
         # Identify slice indices where the segmentation is "active"
         valid_indices = [z for z in range(seg_vol.shape[2]) if np.count_nonzero(seg_vol[:, :, z]) > 0]
-        
+
         if not valid_indices:
             print(f"No valid segmentation found for patient {patient_id}. Skipping patient.")
             continue
@@ -97,6 +163,7 @@ def parse_3d_volumes(dset_dict, seg_type, label_csv_file=None):
         # Determine the selection range.
         # For example, if the active segmentation is between slice 8 and 22, then include from
         # max(0, 8-neighbor_range) to min(num_slices-1, 22+neighbor_range)
+        num_slices = img_vol.shape[2]
         neighbor_range = 3
         min_valid = min(valid_indices)
         max_valid = max(valid_indices)
@@ -111,6 +178,9 @@ def parse_3d_volumes(dset_dict, seg_type, label_csv_file=None):
                 'image': img_vol[:, :, z],
                 seg_key: seg_vol[:, :, z]
             }
+
+            if config.get("adc_guided"):
+               slice_info['adc'] = adc_vol[:, :, z]
 
             # Get the left (previous) slice or pad if at boundary.
             if z - 1 >= 0:
@@ -138,7 +208,8 @@ def parse_3d_volumes(dset_dict, seg_type, label_csv_file=None):
 
             selected_slices.append(slice_info)
     
-    return selected_slices
+    return selected_slices 
+
 
 def get_patient_splits(datapath, test_size, val_size, seed, exclude_ids=None):
     # 1) list all patient‐folder names

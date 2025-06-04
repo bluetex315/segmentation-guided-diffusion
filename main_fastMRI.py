@@ -61,13 +61,23 @@ def main(
     if config['cfg_training']:
         config['output_dir'] += "-CFG"
     
+    if config['adc_guided']:
+        config['output_dir'] += '-adc'
+
     if config['mode'] == 'eval':
         config['output_dir'] += "-eval"
-        
+    
+
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     config['output_dir'] += f"_{timestamp}"
     config['output_dir'] = os.path.join("experiments", config['output_dir'])
     print("output dir: {}".format(config['output_dir']))
+    
+    # save out the config file
+    os.makedirs(config['output_dir'], exist_ok=True)
+    cfg_path = os.path.join(config['output_dir'], "config.yaml")
+    with open(cfg_path, "w") as f:
+        yaml.dump(config, f)
 
     if config['mode'] == "train":
         evalset_name = "val"
@@ -104,13 +114,21 @@ def main(
     # load data
     dset_dict = {}
     if config['img_dir'] is not None:
-        img_paths = [
-            os.path.join(root, file)
-            for root, _, files in sorted(os.walk(config['img_dir']))
-            for file in files if file.endswith("T2W.nii.gz")
-        ]
+        img_paths = []
+        adc_paths = []
+
+        for root, _, files in sorted(os.walk(config['img_dir'])):
+            for file in files:
+                if file.endswith("T2W.nii.gz"):
+                    img_paths.append(os.path.join(root, file))
+                elif config.get('adc_guided') and file.endswith("_ADC.nii.gz"):
+                    adc_paths.append(os.path.join(root, file))
+
         dset_dict["image"] = img_paths
-    
+        if config.get('adc_guided'):
+            dset_dict["adc"] = adc_paths
+    print("\n[main] dset_dict keys: ", dset_dict.keys())
+
     if config['segmentation_guided']:
         seg_types = os.listdir(config['seg_dir'])
         seg_paths = {
@@ -132,9 +150,9 @@ def main(
     dset_dict_val = split_dset_by_patient(dset_dict, val_ids)
     dset_dict_test = split_dset_by_patient(dset_dict, test_ids)
 
-    slices_dset_list_train = parse_3d_volumes(dset_dict_train, seg_type, label_csv_file=config['label_csv_dir'])
-    slices_dset_list_val = parse_3d_volumes(dset_dict_val, seg_type, label_csv_file=config['label_csv_dir'])
-    slices_dset_list_test = parse_3d_volumes(dset_dict_test, seg_type, label_csv_file=config['label_csv_dir'])
+    slices_dset_list_train = parse_3d_volumes(config, dset_dict_train, seg_type, label_csv_file=config['label_csv_dir'])
+    slices_dset_list_val = parse_3d_volumes(config, dset_dict_val, seg_type, label_csv_file=config['label_csv_dir'])
+    slices_dset_list_test = parse_3d_volumes(config, dset_dict_test, seg_type, label_csv_file=config['label_csv_dir'])
     
     print("[main] slices_dset keys", slices_dset_list_train[0].keys())
     
@@ -145,6 +163,10 @@ def main(
 
     if config['segmentation_guided']:
         tot_key.append(seg_key)
+    
+    if config['adc_guided']:
+        tot_key.append('adc')
+        norm_key.append('adc')
     
     if config['neighboring_images_guided']:
         tot_key.append('clean_left')
@@ -265,12 +287,15 @@ def main(
         
         if config['neighboring_images_guided']:     # concat clean_left and clean_right to noisy_images
             in_channels += 2    
+    
+    if config['adc_guided']:
+        in_channels += 1
 
-        if config['class_conditional']:
-            # in_channels += 1
-            num_class_embeds = config['num_class_embeds']
-        else:
-            num_class_embeds = None
+    if config['class_conditional']:
+        # in_channels += 1
+        num_class_embeds = config['num_class_embeds']
+    else:
+        num_class_embeds = None
 
 
     model = diffusers.UNet2DModel(

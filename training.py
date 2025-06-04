@@ -21,7 +21,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 import diffusers
 
-from eval import evaluate, evaluate_fake_PIRADS_images, add_segmentations_to_noise, add_neighboring_images_to_noise, SegGuidedDDPMPipeline, SegGuidedDDIMPipeline
+from eval import evaluate, evaluate_fake_PIRADS_images, add_segmentations_to_noise, add_neighboring_images_to_noise, add_adc_to_noise, SegGuidedDDPMPipeline, SegGuidedDDIMPipeline
 
 
 def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval_dataloader, lr_scheduler, device='cuda'):
@@ -134,6 +134,42 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, eval
             if config['neighboring_images_guided']:
                 noisy_images = add_neighboring_images_to_noise(noisy_images, batch, config, device)
 
+            if config['adc_guided']:
+                noisy_images = add_adc_to_noise(noisy_images, batch, config, device)
+            
+            # sanity check
+            # if epoch == 0 and step == 0:
+            #     channel_names = ["noise", "segmentation", "prev_slice", "next_slice", "adc_slice"]
+
+            #     patient_id = batch['patient_id'][:4]
+            #     slice_idx = batch['slice_idx'][:4]
+
+            #     print("[Train --> save_forward_process]", patient_id, slice_idx)
+            #     print("[Train --> save_forward_process]", noisy_images.shape)
+
+            #     noisy_np = noisy_images.detach().cpu().numpy()  # shape: (B, 5, H, W)
+            #     B, C, H, W = noisy_np.shape
+            #     for i in range(B):
+            #         for c in range(C):
+            #             arr2d = noisy_np[i, c]  # shape (H, W)
+
+            #             # Expand dims to (H, W, 1) so nibabel sees a single‐slice 3D volume
+            #             arr3d = np.expand_dims(arr2d, axis=2)  # shape (H, W, 1)
+
+            #             # Create a simple identity affine. Modify if you have real spacing/origin.
+            #             affine = np.eye(4, dtype=np.float32)
+
+            #             # Create the NIfTI image
+            #             nifti_img = nib.Nifti1Image(arr3d, affine)
+
+            #             # Build filename: e.g. "batch_00_channel_0_noise.nii.gz"
+            #             fname = f"patient{patient_id[i]}_slice{slice_idx[i]}_batch_{i:02d}_ch{c:01d}_{channel_names[c]}.nii.gz"
+            #             fpath = os.path.join(train_save_dir, fname)
+
+            #             # Save to disk
+            #             nib.save(nifti_img, fpath)
+            #             print("save success")
+                        
             if config['class_conditional']:
                 class_labels = batch['class_label'].long().to(device)
                 # classifier-free guidance

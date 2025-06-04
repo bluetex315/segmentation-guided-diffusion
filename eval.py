@@ -364,7 +364,6 @@ def add_segmentations_to_noise(noisy_images, segmentations_batch, config, device
 
     return noisy_images
 
-
 def add_neighboring_images_to_noise(noisy_images, batch, config, device):
     """
     Concatenate neighboring images (e.g., left and right slices) to the noisy image.
@@ -384,6 +383,27 @@ def add_neighboring_images_to_noise(noisy_images, batch, config, device):
     noisy_images = torch.cat((noisy_images, left_images, right_images), dim=1)
     
     return noisy_images
+
+def add_adc_to_noise(noisy_images, batch, config, device):
+    
+    """
+    Concatenate adc slice to the noisy image.
+    
+    Args:
+        noisy_images (torch.Tensor): The noisy central images, shape (B, C, H, W).
+        batch (dict): A dictionary containing the neighboring images with keys: "clean_left" and "clean_right", each of shape (B, C, H, W).
+        config (dict): Configuration parameters, must include 'neighboring_image_channel_mode'.
+        device (torch.device): The device to which tensors are moved.
+    
+    Returns:
+        torch.Tensor: The noisy_images tensor with the neighboring images concatenated along the channel dimension.
+    """
+
+    adc = batch["adc"].to(device, dtype=noisy_images.dtype)
+    noisy_images = torch.cat((noisy_images, adc), dim=1)
+    
+    return noisy_images
+
 
 ####################
 # general DDPM
@@ -805,7 +825,7 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
         batch_size: int = 1,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         eta: float = 0.0,
-        num_inference_steps: int = 50,
+        num_inference_steps: int = 100,
         use_clipped_model_output: Optional[bool] = None,
         output_type: Optional[str] = "np.array",
         return_dict: bool = True,
@@ -864,20 +884,23 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
 
         if self.external_config.config['neighboring_images_guided']:    # discard clean_left and clean_right for denoising scheduler
             img_channel_ct -= 2
+        
+        if self.external_config.config['adc_guided']:
+            img_channel_ct -= 1 
 
         if isinstance(self.unet.config.sample_size, int):
             if self.external_config.config['segmentation_channel_mode'] == "single":
                 if self.external_config.config['neighboring_images_guided']:        # -1 for seg, -2 for neighboring slices
                     image_shape = (
                         batch_size,
-                        self.unet.config.in_channels - 1 - 2,
+                        img_channel_ct,
                         self.unet.config.sample_size,
                         self.unet.config.sample_size,
                     )
                 else:
                     image_shape = (
                         batch_size,
-                        self.unet.config.in_channels - 1,
+                        img_channel_ct,
                         self.unet.config.sample_size,
                         self.unet.config.sample_size,
                     )
@@ -893,13 +916,13 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
                 if self.external_config.config['neighboring_images_guided']:        # -1 for seg, -2 for neighboring slices
                     image_shape = (
                         batch_size,
-                        self.unet.config.in_channels - 1 - 2,
+                        img_channel_ct,
                         *self.unet.config.sample_size,
                     )
                 else:
                     image_shape = (
                         batch_size,
-                        self.unet.config.in_channels - 1,
+                        img_channel_ct
                         *self.unet.config.sample_size,
                     )
 
@@ -945,10 +968,14 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
             # first, concat segmentations to noise
             image = add_segmentations_to_noise(image, seg_batch, self.external_config.config, self.device)
 
-            # Concatenate neighboring slices
+            # 2. Concatenate neighboring slices
             if self.external_config.config['neighboring_images_guided']:
                 image = add_neighboring_images_to_noise(image, seg_batch, self.external_config.config, self.device)
-                
+
+            # 3. Concatenate adc slice
+            if self.external_config.config['neighboring_images_guided']:
+                image = add_adc_to_noise(image, seg_batch, self.external_config.config, self.device)
+
             if self.external_config.config['class_conditional']:
                 true_class_labels = seg_batch['class_label'].long().to(self.device)
                 
