@@ -13,6 +13,7 @@ data_args:
   adc_guided: true
   segmentation_guided: true
   neighboring_images_guided: true
+  neighboring_images_margin: 1
   segmentation_channel_mode: single
   num_segmentation_classes: 3
 

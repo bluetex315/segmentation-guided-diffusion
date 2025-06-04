@@ -164,7 +164,7 @@ def parse_3d_volumes(config, dset_dict, seg_type, label_csv_file=None):
         # For example, if the active segmentation is between slice 8 and 22, then include from
         # max(0, 8-neighbor_range) to min(num_slices-1, 22+neighbor_range)
         num_slices = img_vol.shape[2]
-        neighbor_range = 3
+        neighbor_range = config['neighboring_images_margin']
         min_valid = min(valid_indices)
         max_valid = max(valid_indices)
         start_idx = max(0, min_valid - neighbor_range)
