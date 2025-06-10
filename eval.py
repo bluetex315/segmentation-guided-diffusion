@@ -10,7 +10,7 @@ from copy import deepcopy
 import numpy as np
 
 import diffusers
-from diffusers import DiffusionPipeline, ImagePipelineOutput, DDIMScheduler, RePaintScheduler
+from diffusers import DiffusionPipeline, UNet2DModel, ImagePipelineOutput, DDIMScheduler, RePaintScheduler
 from diffusers.utils.torch_utils import randn_tensor 
 
 from utils import make_grid
