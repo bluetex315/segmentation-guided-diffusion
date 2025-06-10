@@ -10,10 +10,11 @@ from copy import deepcopy
 import numpy as np
 
 import diffusers
-from diffusers import DiffusionPipeline, ImagePipelineOutput, DDIMScheduler
+from diffusers import DiffusionPipeline, ImagePipelineOutput, DDIMScheduler, RePaintScheduler
 from diffusers.utils.torch_utils import randn_tensor 
 
 from utils import make_grid
+from repaint_scheduler import get_schedule_jump, get_schedule_jump_paper
 from torchvision.utils import save_image
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
@@ -959,8 +960,6 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
         else:
             self.scheduler.set_timesteps(num_inference_steps)
             ts = list(self.scheduler.timesteps.cpu().numpy())
-        # set step values
-        self.scheduler.set_timesteps(num_inference_steps)
 
         for t in self.progress_bar(self.scheduler.timesteps):
             if translate:
@@ -1018,17 +1017,14 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
                 model_output, t, image, eta=eta, use_clipped_model_output=use_clipped_model_output, generator=generator
             )
             x_t_minus_one = step_output.prev_sample     # this is \hat{x}_{t-1}
-            print("line 1016", x_t_minus_one.shape)
 
             if self.external_config.config['use_repaint']:
-                print("line 1019", seg_batch.keys())
                 original_images = seg_batch['image']
                 noise = torch.randn(original_images.shape).to(original_images.device)
 
                 t_minus_one = torch.full((original_images.shape[0],), t - 1, device=self.device, dtype=torch.long)
 
                 x_tminus1_known = self.scheduler.add_noise(original_images, noise, t_minus_one)
-                print("line 1025", x_tminus1_known.shape)
 
                 for seg_type in seg_batch.keys():
                     if seg_type.startswith("seg_"):     # Careful, in_paint mask being the 1st element starts with "seg_"
@@ -1036,42 +1032,213 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
                         print("line 1031", inpaint_mask.shape)
 
             image = x_t_minus_one
-        
-        # if training conditionally, also evaluate for target domain images
-        # if not using chosen class for CFG
-        # if self.external_config.config['class_conditional'] and class_label_cfg is None:
-        #     image_target_domain = randn_tensor(image_shape, generator=generator, device=self._execution_device, dtype=self.unet.dtype)
-
-        #     # set step values
-        #     self.scheduler.set_timesteps(num_inference_steps)
-
-        #     for t in self.progress_bar(self.scheduler.timesteps):
-        #         # 1. predict noise model_output
-        #         # first, concat segmentations to noise
-        #         # no masks in target domain so just use blank masks
-        #         image_target_domain = torch.cat((image_target_domain, torch.zeros_like(image_target_domain)), dim=1)
-
-        #         if self.external_config.config['class_conditional']:
-        #             # if training conditionally, also evaluate unconditional model and target domain (no masks)
-        #             class_labels = torch.cat([torch.full([image_target_domain.size(0) // 2], 2), torch.zeros(image_target_domain.size(0) // 2)]).long().to(self.device)
-        #             model_output = self.unet(image_target_domain, t, class_labels=class_labels).sample
-        #         else:
-        #             model_output = self.unet(image_target_domain, t).sample
-
-        #         # 2. predict previous mean of image x_t-1 and add variance depending on eta
-        #         # eta corresponds to η in paper and should be between [0, 1]
-        #         # do x_t -> x_t-1
-        #         # but first, we're only adding denoising the image channel (not seg channel),
-        #         # so remove segs
-        #         image_target_domain = image_target_domain[:, :img_channel_ct, :, :]
-        #         image_target_domain = self.scheduler.step(
-        #             model_output, t, image_target_domain, eta=eta, use_clipped_model_output=use_clipped_model_output, generator=generator
-        #         ).prev_sample
-
-        #     image = torch.cat((image, image_target_domain), dim=0)
-            # will output source domain images first, then target domain images
 
         # image = (image / 2 + 0.5).clamp(0, 1)
+        image = image.cpu().permute(0, 2, 3, 1).numpy()
+        if output_type == "pil":
+            image = self.numpy_to_pil(image)
+
+        if not return_dict:
+            return (image,)
+
+        return ImagePipelineOutput(images=image)
+
+
+class SegGuidedDDPMRepaintPipeline(DiffusionPipeline):
+    unet: UNet2DModel
+    scheduler: RePaintScheduler
+
+    def __init__(self, unet, scheduler, eval_dataloader, external_config):
+        super().__init__()
+        # Wrap the external_config so it behaves like a module
+        # wrapped_external_config = SimpleNamespace(**external_config)
+        wrapped_external_config = ConfigWrapper(external_config)
+        self.register_modules(unet=unet, scheduler=scheduler, eval_dataloader=eval_dataloader, external_config=wrapped_external_config)
+        # ^ some reason necessary for DDIM but not DDPM.
+
+        self.eval_dataloader = eval_dataloader
+        self.external_config = wrapped_external_config # config is already a thing
+
+        # make sure scheduler can always be converted to DDIM
+        # scheduler = DDIMScheduler.from_config(scheduler.config)
+
+    # def __init__(self, unet, scheduler):
+    #     super().__init__()
+    #     self.register_modules(unet=unet, scheduler=scheduler)
+
+    @torch.no_grad()
+    def __call__(
+        self,
+        batch_size: int = 1,
+        # original_image: Union[torch.FloatTensor, PIL.Image.Image],
+        # mask_image: Union[torch.FloatTensor, PIL.Image.Image],
+        num_inference_steps: int = 250,
+        eta: float = 0.0,
+        jump_length: int = 10,
+        jump_n_sample: int = 10,
+        generator: Optional[torch.Generator] = None,
+        output_type: Optional[str] = "numpy",
+        return_dict: bool = True,
+        seg_batch: Optional[torch.Tensor] = None,
+        # class_label_cfg: Optional[int] = None,
+        fake_class_labels: Optional[torch.Tensor] = None,
+    ) -> Union[ImagePipelineOutput, Tuple]:
+        r"""
+        Args:
+            original_image (`torch.FloatTensor` or `PIL.Image.Image`):
+                The original image to inpaint on.
+            mask_image (`torch.FloatTensor` or `PIL.Image.Image`):
+                The mask_image where 0.0 values define which part of the original image to inpaint (change).
+            num_inference_steps (`int`, *optional*, defaults to 1000):
+                The number of denoising steps. More denoising steps usually lead to a higher quality image at the
+                expense of slower inference.
+            eta (`float`):
+                The weight of noise for added noise in a diffusion step. Its value is between 0.0 and 1.0 - 0.0 is DDIM
+                and 1.0 is DDPM scheduler respectively.
+            jump_length (`int`, *optional*, defaults to 10):
+                The number of steps taken forward in time before going backward in time for a single jump ("j" in
+                RePaint paper). Take a look at Figure 9 and 10 in https://arxiv.org/pdf/2201.09865.pdf.
+            jump_n_sample (`int`, *optional*, defaults to 10):
+                The number of times we will make forward time jump for a given chosen time sample. Take a look at
+                Figure 9 and 10 in https://arxiv.org/pdf/2201.09865.pdf.
+            generator (`torch.Generator`, *optional*):
+                A [torch generator](https://pytorch.org/docs/stable/generated/torch.Generator.html) to make generation
+                deterministic.
+            output_type (`str`, *optional*, defaults to `"pil"`):
+                The output format of the generate image. Choose between
+                [PIL](https://pillow.readthedocs.io/en/stable/): `PIL.Image.Image` or `np.array`.
+            return_dict (`bool`, *optional*, defaults to `True`):
+                Whether or not to return a [`~pipeline_utils.ImagePipelineOutput`] instead of a plain tuple.
+
+        Returns:
+            [`~pipeline_utils.ImagePipelineOutput`] or `tuple`: [`~pipelines.utils.ImagePipelineOutput`] if
+            `return_dict` is True, otherwise a `tuple. When returning a tuple, the first element is a list with the
+            generated images.
+        """
+       
+        # Sample gaussian noise to begin loop
+        if self.external_config.config['segmentation_channel_mode'] == "single":
+            img_channel_ct = self.unet.config.in_channels - 1
+        elif self.external_config.config['segmentation_channel_mode'] == "multi":
+            img_channel_ct = self.unet.config.in_channels - len([k for k in seg_batch.keys() if k.startswith("seg_")])
+
+        if self.external_config.config['neighboring_images_guided']:    # discard clean_left and clean_right for denoising scheduler
+            img_channel_ct -= 2
+        
+        if self.external_config.config['adc_guided']:
+            img_channel_ct -= 1 
+
+        if isinstance(self.unet.config.sample_size, int):
+            if self.external_config.config['segmentation_channel_mode'] == "single":
+                if self.external_config.config['neighboring_images_guided']:        # -1 for seg, -2 for neighboring slices
+                    image_shape = (
+                        batch_size,
+                        img_channel_ct,
+                        self.unet.config.sample_size,
+                        self.unet.config.sample_size,
+                    )
+                else:
+                    image_shape = (
+                        batch_size,
+                        img_channel_ct,
+                        self.unet.config.sample_size,
+                        self.unet.config.sample_size,
+                    )
+            elif self.external_config.config['segmentation_channel_mode'] == "multi":
+                image_shape = (
+                    batch_size,
+                    self.unet.config.in_channels - len([k for k in seg_batch.keys() if k.startswith("seg_")]),
+                    self.unet.config.sample_size,
+                    self.unet.config.sample_size,
+                )
+        else:
+            if self.external_config.config['segmentation_channel_mode'] == "single":
+                if self.external_config.config['neighboring_images_guided']:        # -1 for seg, -2 for neighboring slices
+                    image_shape = (
+                        batch_size,
+                        img_channel_ct,
+                        *self.unet.config.sample_size,
+                    )
+                else:
+                    image_shape = (
+                        batch_size,
+                        img_channel_ct
+                        *self.unet.config.sample_size,
+                    )
+
+            elif self.external_config.config['segmentation_channel_mode'] == "multi":
+                image_shape = (batch_size, self.unet.config.in_channels - len([k for k in seg_batch.keys() if k.startswith("seg_")]), *self.unet.config.sample_size)
+            
+        if isinstance(generator, list) and len(generator) != batch_size:
+            raise ValueError(
+                f"You have passed a list of generators of length {len(generator)}, but requested an effective batch"
+                f" size of {batch_size}. Make sure the batch size matches the length of the generators."
+            )
+
+        # initiate latent variable to sample from
+        # normal sampling; start from noise
+        image = randn_tensor(image_shape, generator=generator, device=self._execution_device, dtype=self.unet.dtype)
+
+        # set step values
+        self.scheduler.set_timesteps(num_inference_steps, jump_length, jump_n_sample, self.device)
+        self.scheduler.eta = eta
+
+        t_last = self.scheduler.timesteps[0] + 1
+        for i, t in enumerate(tqdm(self.scheduler.timesteps)):
+            
+            # 1. predict noise model_output
+            # first, concat segmentations to noise
+            image = add_segmentations_to_noise(image, seg_batch, self.external_config.config, self.device)
+
+            # 2. Concatenate neighboring slices
+            if self.external_config.config['neighboring_images_guided']:
+                image = add_neighboring_images_to_noise(image, seg_batch, self.external_config.config, self.device)
+
+            # 3. Concatenate adc slice
+            if self.external_config.config['adc_guided']:
+                image = add_adc_to_noise(image, seg_batch, self.external_config.config, self.device)
+            
+            if t < t_last:
+                    
+                if self.external_config.config['class_conditional']:
+                    true_class_labels = seg_batch['class_label'].long().to(self.device)
+        
+                    # use cfg for eval
+                    if self.external_config.config['cfg_eval']:
+                        # use fake_class_labels for synthesis
+                        if fake_class_labels is not None:       
+                            fake_class_labels = fake_class_labels.long().to(self.device)
+                            model_output_cond = self.unet(image, t, class_labels=fake_class_labels).sample
+                            model_output_uncond = self.unet(image, t, class_labels=torch.zeros_like(fake_class_labels).long()).sample
+
+                        else:       # use true_class_labels for cfg  
+                            model_output_cond = self.unet(image, t, class_labels=true_class_labels).sample
+                            model_output_uncond = self.unet(image, t, class_labels=torch.zeros_like(true_class_labels).long()).sample
+
+                        model_output = (1. + self.external_config.config['cfg_weight']) * model_output_cond - self.external_config.config['cfg_weight'] * model_output_uncond
+                    
+                    else:
+                        # no cfg for eval
+                        # TODO: complete no use cfg and synthesize using fake labels
+                        model_output = self.unet(image, t, class_labels=true_class_labels).sample
+                else:
+                    # no class guided
+                    model_output = self.unet(image, t).sample
+
+                
+                x_in = image[:, :img_channel_ct, :, :]
+                step_out = self.scheduler.step(
+                    model_output, t, x_in,
+                    eta=eta,
+                    use_clipped_model_output=use_clipped_model_output,
+                    generator=generator
+                )
+                image = step_out.prev_sample
+            
+            else:
+                t_last = t
+
+        image = (image / 2 + 0.5).clamp(0, 1)
         image = image.cpu().permute(0, 2, 3, 1).numpy()
         if output_type == "pil":
             image = self.numpy_to_pil(image)
