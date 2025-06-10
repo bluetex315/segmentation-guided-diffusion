@@ -825,7 +825,7 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
         batch_size: int = 1,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         eta: float = 0.0,
-        num_inference_steps: int = 100,
+        num_inference_steps: int = 50,
         use_clipped_model_output: Optional[bool] = None,
         output_type: Optional[str] = "np.array",
         return_dict: bool = True,
@@ -954,6 +954,11 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
                 ).long()
             image = self.scheduler.add_noise(trans_start_images, noise, timesteps)
 
+        if self.external_config['use_repaint']:
+            ts = get_schedule_jump_paper()
+        else:
+            self.scheduler.set_timesteps(num_inference_steps)
+            ts = list(self.scheduler.timesteps.cpu().numpy())
         # set step values
         self.scheduler.set_timesteps(num_inference_steps)
 
@@ -973,7 +978,7 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
                 image = add_neighboring_images_to_noise(image, seg_batch, self.external_config.config, self.device)
 
             # 3. Concatenate adc slice
-            if self.external_config.config['neighboring_images_guided']:
+            if self.external_config.config['adc_guided']:
                 image = add_adc_to_noise(image, seg_batch, self.external_config.config, self.device)
 
             if self.external_config.config['class_conditional']:
@@ -1009,10 +1014,29 @@ class SegGuidedDDIMPipeline(DiffusionPipeline):
             # but first, we're only adding denoising the image channel (not seg channel),
             # so remove segs
             image = image[:, :img_channel_ct, :, :]
-            image = self.scheduler.step(
+            step_output = self.scheduler.step(
                 model_output, t, image, eta=eta, use_clipped_model_output=use_clipped_model_output, generator=generator
-            ).prev_sample
+            )
+            x_t_minus_one = step_output.prev_sample     # this is \hat{x}_{t-1}
+            print("line 1016", x_t_minus_one.shape)
 
+            if self.external_config.config['use_repaint']:
+                print("line 1019", seg_batch.keys())
+                original_images = seg_batch['image']
+                noise = torch.randn(original_images.shape).to(original_images.device)
+
+                t_minus_one = torch.full((original_images.shape[0],), t - 1, device=self.device, dtype=torch.long)
+
+                x_tminus1_known = self.scheduler.add_noise(original_images, noise, t_minus_one)
+                print("line 1025", x_tminus1_known.shape)
+
+                for seg_type in seg_batch.keys():
+                    if seg_type.startswith("seg_"):     # Careful, in_paint mask being the 1st element starts with "seg_"
+                        inpaint_mask = (seg_batch[seg_type] > 0).float()       # shape = [B, H, W]
+                        print("line 1031", inpaint_mask.shape)
+
+            image = x_t_minus_one
+        
         # if training conditionally, also evaluate for target domain images
         # if not using chosen class for CFG
         # if self.external_config.config['class_conditional'] and class_label_cfg is None:
