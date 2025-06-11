@@ -347,15 +347,6 @@ def main(
     model = nn.DataParallel(model)
     model.to(device)
 
-    # define noise scheduler
-    if config['model_type'] == "DDPM":
-        noise_scheduler = diffusers.DDPMScheduler(num_train_timesteps=1000)
-    elif config['model_type'] == "DDIM":
-        if config['use_squaredcos_cap_v2_scheduler']:
-            noise_scheduler = diffusers.DDIMScheduler(num_train_timesteps=1000, beta_start=0.00005, beta_end=0.01, beta_schedule="squaredcos_cap_v2")
-        else:
-            noise_scheduler = diffusers.DDIMScheduler(num_train_timesteps=1000, beta_start=0.00005, beta_end=0.01, beta_schedule="linear")
-
     if config['mode'] == "train":
         # training setup
         optimizer = torch.optim.AdamW(model.parameters(), lr=config['learning_rate'])
